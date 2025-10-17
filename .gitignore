@@ -1,0 +1,15 @@
+node_modules
+dist
+build
+.next
+pnpm-lock.yaml
+.yarn
+.DS_Store
+.env*
+coverage
+**/*.local.*
+**/*.secret.*
+**/*.pem
+**/*.key
+target
+bin

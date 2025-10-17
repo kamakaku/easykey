@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "EasyKey Autofill",
+  "version": "0.1.0",
+  "description": "Autofill scaffold for EasyKey",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "background": { "service_worker": "dist/background.js" },
+  "content_scripts": [{
+    "matches": ["<all_urls>"],
+    "js": ["dist/content.js"],
+    "run_at": "document_idle"
+  }]
+}
