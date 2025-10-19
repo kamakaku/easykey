@@ -29,5 +29,5 @@ export async function generatePassword(opts: {
   if (alphabet.length < 8) throw new Error('Alphabet zu klein.');
 
   const buf = s.randombytes_buf(opts.length);
-  return Array.from(buf, b => alphabet.charAt(b % alphabet.length)).join('');
+  return Array.from(buf, (b: number) => alphabet.charAt(b % alphabet.length)).join('');
 }

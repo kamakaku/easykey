@@ -1,12 +1,19 @@
-export const metadata = { title: 'EasyKey', description: 'Secure password manager (MVP scaffold)' };
+import "./globals.css";
+import type { Metadata } from "next";
+import { AuthProvider } from "./context/AuthContext";
+
+export const metadata: Metadata = {
+  title: "EasyKey",
+  description: "Zero-knowledge password manager",
+};
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="de">
       <body>
-        <main style={{ padding: 24, fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif' }}>
+        <AuthProvider>
           {children}
-        </main>
+        </AuthProvider>
       </body>
     </html>
   );

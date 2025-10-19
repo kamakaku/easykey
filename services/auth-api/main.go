@@ -10,14 +10,18 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
+	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/joho/godotenv"
+	"golang.org/x/crypto/bcrypt"
 )
 
 /* ========= Types ========= */
@@ -46,18 +50,39 @@ type TokenInfo struct {
 	Used    bool
 }
 
+// Auth DTOs
+type RegisterRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"` // Master-Passwort (client-side only)
+}
+
+type LoginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+type AuthResponse struct {
+	Ok     bool   `json:"ok"`
+	UserID string `json:"userId"`
+}
+
 // Vault DTOs
 type VaultGetResponse struct {
-	Version int    `json:"version"`
 	BlobB64 string `json:"blob"` // base64 (ciphertext vom Client)
 }
 type VaultPutRequest struct {
-	Version int    `json:"version"` // erwartete Version (0 = neu)
-	BlobB64 string `json:"blob"`    // base64 (ciphertext)
+	BlobB64 string `json:"blob"` // base64 (ciphertext)
 }
 type VaultPutResponse struct {
-	Ok         bool `json:"ok"`
-	NewVersion int  `json:"newVersion"`
+	Ok bool `json:"ok"`
+}
+
+// Generator Settings DTOs
+type GeneratorGetResponse struct {
+	BlobB64 string `json:"blob"` // base64 (ciphertext vom Client)
+}
+type GeneratorPutRequest struct {
+	BlobB64 string `json:"blob"` // base64 (ciphertext)
 }
 
 /* ========= Globals ========= */
@@ -78,6 +103,8 @@ var (
 	jwtSecret []byte
 
 	db *sql.DB
+	// dbDriver keeps track of the driver currently in use (sqlite3 or mysql)
+	dbDriver string
 )
 
 /* ========= Init ========= */
@@ -92,11 +119,13 @@ func init() {
 
 /* ========= DB Init / Repos ========= */
 
-const schema = `
+const sqliteSchema = `
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS users(
   id TEXT PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -104,106 +133,484 @@ CREATE TABLE IF NOT EXISTS users(
 CREATE TABLE IF NOT EXISTS vaults(
   user_id  TEXT PRIMARY KEY,
   blob     BLOB NOT NULL,
-  version  INTEGER NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS generator_settings(
+  user_id  TEXT PRIMARY KEY,
+  blob     BLOB NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 `
 
+const mysqlSchema = `
+CREATE TABLE IF NOT EXISTS users (
+    id VARCHAR(36) PRIMARY KEY,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_email (email),
+    INDEX idx_updated_at (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS vaults (
+    user_id VARCHAR(36) PRIMARY KEY,
+    blob MEDIUMBLOB NOT NULL,
+    version INT NOT NULL DEFAULT 1,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    INDEX idx_updated_at (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS generator_settings (
+    user_id VARCHAR(36) PRIMARY KEY,
+    blob MEDIUMBLOB NOT NULL,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    INDEX idx_updated_at (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+`
+
 func initDB() error {
 	dsn := os.Getenv("DB_DSN")
-	if dsn == "" {
-		dsn = "file:easykey.db?_fk=1"
+	driver := os.Getenv("DB_DRIVER")
+
+	// Auto-detect driver from DSN if not specified
+	if driver == "" {
+		if strings.Contains(dsn, "://") || strings.HasPrefix(dsn, "file:") {
+			driver = "sqlite3"
+		} else if dsn != "" {
+			driver = "mysql"
+		} else {
+			// Default: SQLite for local development
+			driver = "sqlite3"
+			dsn = "file:easykey.db?_fk=1"
+		}
 	}
+
+	dbDriver = driver
+
+	log.Printf("Connecting to database: driver=%s", driver)
+
 	var err error
-	db, err = sql.Open("sqlite3", dsn)
+	db, err = sql.Open(driver, dsn)
+	if err != nil {
+		return fmt.Errorf("failed to open database: %w", err)
+	}
+
+	// Set connection pool settings
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
+	// Test connection
+	if err = db.Ping(); err != nil {
+		return fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	// Execute schema
+	if driver == "mysql" {
+		// MySQL/MariaDB: Execute statements separately
+		statements := []string{
+			`CREATE TABLE IF NOT EXISTS users (
+				id VARCHAR(36) PRIMARY KEY,
+				email VARCHAR(255) UNIQUE NOT NULL,
+				password_hash VARCHAR(255) NOT NULL,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+				INDEX idx_email (email),
+				INDEX idx_updated_at (updated_at)
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+			`CREATE TABLE IF NOT EXISTS vaults (
+				user_id VARCHAR(36) PRIMARY KEY,
+				` + "`blob`" + ` MEDIUMBLOB NOT NULL,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+				FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+				INDEX idx_updated_at (updated_at)
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+			`CREATE TABLE IF NOT EXISTS generator_settings (
+				user_id VARCHAR(36) PRIMARY KEY,
+				` + "`blob`" + ` MEDIUMBLOB NOT NULL,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+				FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+				INDEX idx_updated_at (updated_at)
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		}
+		for _, stmt := range statements {
+			if _, err = db.Exec(stmt); err != nil {
+				return fmt.Errorf("failed to create schema: %w", err)
+			}
+		}
+	} else {
+		// SQLite: Can execute all at once
+		if _, err = db.Exec(sqliteSchema); err != nil {
+			return fmt.Errorf("failed to create schema: %w", err)
+		}
+	}
+
+	if err := ensureUserSchema(); err != nil {
+		return fmt.Errorf("failed to ensure user schema: %w", err)
+	}
+
+	log.Printf("Database initialized successfully")
+	return nil
+}
+
+func ensureUserSchema() error {
+	switch dbDriver {
+	case "mysql":
+		if err := addColumnIfMissingMySQL("users", "email", "VARCHAR(255) DEFAULT NULL"); err != nil {
+			return err
+		}
+		if err := addColumnIfMissingMySQL("users", "password_hash", "VARCHAR(255) DEFAULT NULL"); err != nil {
+			return err
+		}
+		if err := addIndexIfMissingMySQL("users", "idx_email", "ADD UNIQUE KEY idx_email (email)"); err != nil {
+			return err
+		}
+	case "sqlite3":
+		if err := addColumnIfMissingSQLite("users", "email", "TEXT"); err != nil {
+			return err
+		}
+		if err := addColumnIfMissingSQLite("users", "password_hash", "TEXT"); err != nil {
+			return err
+		}
+	}
+	return migrateLegacyUsers()
+}
+
+func addColumnIfMissingMySQL(table, column, definition string) error {
+	var count int
+	err := db.QueryRow(`
+		SELECT COUNT(*) FROM information_schema.COLUMNS
+		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?`,
+		table, column,
+	).Scan(&count)
 	if err != nil {
 		return err
 	}
-	if _, err = db.Exec(schema); err != nil {
+	if count > 0 {
+		return nil
+	}
+	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition))
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return nil
+		}
 		return err
 	}
-	return db.Ping()
+	return nil
 }
 
-// ensureUser: legt User an, wenn nicht vorhanden
+func addIndexIfMissingMySQL(table, indexName, alterStmt string) error {
+	var count int
+	err := db.QueryRow(`
+		SELECT COUNT(*) FROM information_schema.STATISTICS
+		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME=? AND INDEX_NAME=?`,
+		table, indexName,
+	).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	if _, err = db.Exec(fmt.Sprintf("ALTER TABLE %s %s", table, alterStmt)); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "duplicate key name") {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func addColumnIfMissingSQLite(table, column, definition string) error {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			ctype     string
+			notnull   int
+			dfltValue any
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if rows.Err() != nil {
+		return rows.Err()
+	}
+	if _, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition)); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func migrateLegacyUsers() error {
+	rows, err := db.Query(`SELECT id, email, password_hash FROM users`)
+	if err != nil {
+		// Table might be empty / newly created
+		if strings.Contains(strings.ToLower(err.Error()), "no such column") {
+			return nil
+		}
+		return err
+	}
+	defer rows.Close()
+
+	type userRow struct {
+		id           string
+		email        sql.NullString
+		passwordHash sql.NullString
+	}
+	var legacy []userRow
+
+	for rows.Next() {
+		var r userRow
+		if scanErr := rows.Scan(&r.id, &r.email, &r.passwordHash); scanErr != nil {
+			return scanErr
+		}
+		if !r.email.Valid || r.email.String == "" || !r.passwordHash.Valid || r.passwordHash.String == "" {
+			legacy = append(legacy, r)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if len(legacy) == 0 {
+		return nil
+	}
+
+	for _, u := range legacy {
+		email := u.email.String
+		if email == "" {
+			email = fmt.Sprintf("legacy-%s@placeholder.easykey", strings.ReplaceAll(u.id, "-", ""))
+		}
+		password := uuid.NewString()
+		hashedPassword, hashErr := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if hashErr != nil {
+			return hashErr
+		}
+
+		if _, err := db.Exec(`UPDATE users SET email=?, password_hash=? WHERE id=?`, email, string(hashedPassword), u.id); err != nil {
+			return err
+		}
+	}
+
+	// For MySQL tighten constraints after data migration
+	if dbDriver == "mysql" {
+		if _, err := db.Exec(`ALTER TABLE users MODIFY COLUMN email VARCHAR(255) NOT NULL`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "doesn't exist") {
+			return err
+		}
+		if _, err := db.Exec(`ALTER TABLE users MODIFY COLUMN password_hash VARCHAR(255) NOT NULL`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "doesn't exist") {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// createUser: erstellt einen neuen User mit Email und Passwort
+func createUser(email, password string) (string, error) {
+	// Passwort hashen
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	userID := uuid.NewString()
+	now := nowString()
+
+	_, err = db.Exec(`
+		INSERT INTO users(id, email, password_hash, created_at, updated_at)
+		VALUES(?, ?, ?, ?, ?)
+	`, userID, email, string(hashedPassword), now, now)
+
+	if err != nil {
+		return "", fmt.Errorf("failed to create user: %w", err)
+	}
+
+	return userID, nil
+}
+
+// getUserByEmail: findet User anhand der Email
+func getUserByEmail(email string) (id, passwordHash string, found bool, err error) {
+	row := db.QueryRow(`SELECT id, password_hash FROM users WHERE email=?`, email)
+	err = row.Scan(&id, &passwordHash)
+	if err == sql.ErrNoRows {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, err
+	}
+	return id, passwordHash, true, nil
+}
+
+// verifyPassword: prüft ob Passwort korrekt ist
+func verifyPassword(hashedPassword, password string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
+	return err == nil
+}
+
+// ensureUser stellt sicher, dass ein User-Datensatz existiert.
+// Für QR-basierte Logins wird bei Bedarf ein Platzhalter-User angelegt.
 func ensureUser(id string) error {
-	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := db.Exec(`
-		INSERT INTO users(id, created_at, updated_at)
-		VALUES(?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at
-	`, id, now, now)
-	return err
+	if id == "" {
+		return fmt.Errorf("user id required")
+	}
+	var exists int
+	err := db.QueryRow(`SELECT 1 FROM users WHERE id=?`, id).Scan(&exists)
+	if err == nil {
+		return nil
+	}
+	if err != sql.ErrNoRows {
+		return err
+	}
+
+	placeholderEmail := fmt.Sprintf("qr-%s@placeholder.easykey", strings.ReplaceAll(id, "-", ""))
+	placeholderPassword := uuid.NewString()
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(placeholderPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash placeholder password: %w", err)
+	}
+
+	now := nowString()
+	_, err = db.Exec(`
+		INSERT INTO users(id, email, password_hash, created_at, updated_at)
+		VALUES(?, ?, ?, ?, ?)
+	`, id, placeholderEmail, string(hashedPassword), now, now)
+	if err != nil {
+		return fmt.Errorf("failed to create placeholder user: %w", err)
+	}
+	return nil
 }
 
 // getVault: liest Vault; ok=false, wenn nicht vorhanden
-func getVault(userID string) (version int, blob []byte, updated time.Time, ok bool, err error) {
-	row := db.QueryRow(`SELECT version, blob, updated_at FROM vaults WHERE user_id=?`, userID)
-	var updatedStr string
-	err = row.Scan(&version, &blob, &updatedStr)
+func getVault(userID string) (blob []byte, ok bool, err error) {
+	selectSQL := `SELECT `
+	if dbDriver == "mysql" {
+		selectSQL += "`blob`"
+	} else {
+		selectSQL += "blob"
+	}
+	selectSQL += ` FROM vaults WHERE user_id=?`
+
+	row := db.QueryRow(selectSQL, userID)
+	err = row.Scan(&blob)
 	if err == sql.ErrNoRows {
-		return 0, nil, time.Time{}, false, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return 0, nil, time.Time{}, false, err
+		return nil, false, err
 	}
-	t, _ := time.Parse(time.RFC3339, updatedStr)
-	return version, blob, t, true, nil
+	return blob, true, nil
 }
 
-// putVault: optimistisches Locking via Version
-// - existiert nicht  && expectVersion==0  => INSERT version=1
-// - existiert       && expectVersion==cur => UPDATE version=cur+1 (WHERE version=?)
-// - sonst 409
-func putVault(userID string, expectVersion int, blob []byte) (newVersion int, err error, conflictCur int) {
-	now := time.Now().UTC().Format(time.RFC3339)
+// putVault: speichert oder überschreibt Vault (ohne Versioning)
+func putVault(userID string, blob []byte) error {
+	now := nowString()
 
 	// Versuchen: UPDATE, wenn vorhanden
-	res, err := db.Exec(`
-		UPDATE vaults
-		SET blob=?, version=version+1, updated_at=?
-		WHERE user_id=? AND version=?`,
-		blob, now, userID, expectVersion,
-	)
+	updateSQL := `UPDATE vaults SET `
+	if dbDriver == "mysql" {
+		updateSQL += "`blob`"
+	} else {
+		updateSQL += "blob"
+	}
+	updateSQL += `=?, updated_at=? WHERE user_id=?`
+
+	res, err := db.Exec(updateSQL, blob, now, userID)
 	if err != nil {
-		return 0, err, 0
+		return err
 	}
 	aff, _ := res.RowsAffected()
 	if aff == 1 {
-		// neue Version abfragen
-		row := db.QueryRow(`SELECT version FROM vaults WHERE user_id=?`, userID)
-		var v int
-		if e := row.Scan(&v); e != nil {
-			return 0, e, 0
-		}
-		return v, nil, 0
+		return nil
 	}
 
-	// Wenn kein Update – prüfen, ob Datensatz existiert
-	row := db.QueryRow(`SELECT version FROM vaults WHERE user_id=?`, userID)
-	var cur int
-	switch e := row.Scan(&cur); e {
-	case sql.ErrNoRows:
-		// neu anlegen nur erlaubt, wenn expectVersion==0
-		if expectVersion != 0 {
-			return 0, fmt.Errorf("conflict"), 0
-		}
-		_, err = db.Exec(`
-			INSERT INTO vaults(user_id, blob, version, updated_at)
-			VALUES(?, ?, 1, ?)`,
-			userID, blob, now,
-		)
-		if err != nil {
-			return 0, err, 0
-		}
-		return 1, nil, 0
-	case nil:
-		// existiert, aber Version passt nicht => Konflikt
-		return 0, fmt.Errorf("conflict"), cur
-	default:
-		return 0, e, 0
+	// Wenn kein Update – INSERT
+	insertSQL := `INSERT INTO vaults(user_id, `
+	if dbDriver == "mysql" {
+		insertSQL += "`blob`"
+	} else {
+		insertSQL += "blob"
 	}
+	insertSQL += `, updated_at) VALUES(?, ?, ?)`
+
+	_, err = db.Exec(insertSQL, userID, blob, now)
+	return err
+}
+
+// getGeneratorSettings: liest Generator-Settings; ok=false, wenn nicht vorhanden
+func getGeneratorSettings(userID string) (blob []byte, ok bool, err error) {
+	selectSQL := `SELECT `
+	if dbDriver == "mysql" {
+		selectSQL += "`blob`"
+	} else {
+		selectSQL += "blob"
+	}
+	selectSQL += ` FROM generator_settings WHERE user_id=?`
+
+	row := db.QueryRow(selectSQL, userID)
+	err = row.Scan(&blob)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return blob, true, nil
+}
+
+// putGeneratorSettings: speichert oder überschreibt Generator-Settings
+func putGeneratorSettings(userID string, blob []byte) error {
+	now := nowString()
+
+	// Versuchen: UPDATE, wenn vorhanden
+	updateSQL := `UPDATE generator_settings SET `
+	if dbDriver == "mysql" {
+		updateSQL += "`blob`"
+	} else {
+		updateSQL += "blob"
+	}
+	updateSQL += `=?, updated_at=? WHERE user_id=?`
+
+	res, err := db.Exec(updateSQL, blob, now, userID)
+	if err != nil {
+		return err
+	}
+	aff, _ := res.RowsAffected()
+	if aff == 1 {
+		return nil
+	}
+
+	// Wenn kein Update – INSERT
+	insertSQL := `INSERT INTO generator_settings(user_id, `
+	if dbDriver == "mysql" {
+		insertSQL += "`blob`"
+	} else {
+		insertSQL += "blob"
+	}
+	insertSQL += `, updated_at) VALUES(?, ?, ?)`
+
+	_, err = db.Exec(insertSQL, userID, blob, now)
+	return err
 }
 
 /* ========= Rate Limiting (DEV-Light) ========= */
@@ -271,6 +678,32 @@ func writeJSON(w http.ResponseWriter, v any, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// CORS Headers
+		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+		// Handle preflight
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next(w, r)
+	}
+}
+
+func nowString() string {
+	t := time.Now().UTC()
+	if dbDriver == "mysql" {
+		return t.Format("2006-01-02 15:04:05")
+	}
+	return t.Format(time.RFC3339)
 }
 
 func cleanupLoop() {
@@ -347,6 +780,167 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 		Status: "ok",
 		Time:   time.Now().UTC().Format(time.RFC3339),
 	}, http.StatusOK)
+}
+
+/* ---- Auth: Register & Login ---- */
+
+func handleRegister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !allow(clientIP(r), 3) { // 3 Registrierungen pro Sekunde pro IP
+		http.Error(w, "too many requests", http.StatusTooManyRequests)
+		return
+	}
+
+	var body RegisterRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+
+	body.Email = strings.TrimSpace(strings.ToLower(body.Email))
+
+	// Validierung
+	if body.Email == "" || body.Password == "" {
+		http.Error(w, "email and password required", http.StatusBadRequest)
+		return
+	}
+	if !strings.Contains(body.Email, "@") {
+		http.Error(w, "invalid email", http.StatusBadRequest)
+		return
+	}
+	if len(body.Password) < 8 {
+		http.Error(w, "password must be at least 8 characters", http.StatusBadRequest)
+		return
+	}
+
+	// Prüfen ob Email bereits existiert
+	_, _, exists, err := getUserByEmail(body.Email)
+	if err != nil {
+		log.Printf("Error checking email: %v", err)
+		http.Error(w, "database error", http.StatusInternalServerError)
+		return
+	}
+	if exists {
+		http.Error(w, "email already registered", http.StatusConflict)
+		return
+	}
+
+	// User erstellen
+	userID, err := createUser(body.Email, body.Password)
+	if err != nil {
+		log.Printf("Error creating user: %v", err)
+		http.Error(w, "failed to create user", http.StatusInternalServerError)
+		return
+	}
+
+	// JWT erstellen und Session Cookie setzen
+	jwtStr, err := mintJWT(userID, 24*time.Hour) // 24h Session
+	if err != nil {
+		http.Error(w, "failed to create session", http.StatusInternalServerError)
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "ek_session",
+		Value:    jwtStr,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		// Secure: true, // PROD via HTTPS
+		MaxAge: 24 * 60 * 60, // 24h
+	})
+
+	writeJSON(w, AuthResponse{
+		Ok:     true,
+		UserID: userID,
+	}, http.StatusCreated)
+}
+
+func handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !allow(clientIP(r), 5) { // 5 Login-Versuche pro Sekunde pro IP
+		http.Error(w, "too many requests", http.StatusTooManyRequests)
+		return
+	}
+
+	var body LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+
+	body.Email = strings.TrimSpace(strings.ToLower(body.Email))
+
+	if body.Email == "" || body.Password == "" {
+		http.Error(w, "email and password required", http.StatusBadRequest)
+		return
+	}
+
+	// User finden
+	userID, passwordHash, found, err := getUserByEmail(body.Email)
+	if err != nil {
+		log.Printf("Error finding user: %v", err)
+		http.Error(w, "database error", http.StatusInternalServerError)
+		return
+	}
+	if !found {
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	// Passwort prüfen
+	if !verifyPassword(passwordHash, body.Password) {
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	// JWT erstellen und Session Cookie setzen
+	jwtStr, err := mintJWT(userID, 24*time.Hour) // 24h Session
+	if err != nil {
+		http.Error(w, "failed to create session", http.StatusInternalServerError)
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "ek_session",
+		Value:    jwtStr,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		// Secure: true, // PROD via HTTPS
+		MaxAge: 24 * 60 * 60, // 24h
+	})
+
+	writeJSON(w, AuthResponse{
+		Ok:     true,
+		UserID: userID,
+	}, http.StatusOK)
+}
+
+func handleLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "ek_session",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+		// Secure: true, // PROD via HTTPS
+	})
+
+	writeJSON(w, map[string]any{"ok": true}, http.StatusOK)
 }
 
 /* ---- QR Flow (wie zuvor) ---- */
@@ -557,7 +1151,7 @@ func handleVaultGet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "db", http.StatusInternalServerError)
 		return
 	}
-	ver, blob, _, found, err := getVault(userID)
+	blob, found, err := getVault(userID)
 	if err != nil {
 		http.Error(w, "db", http.StatusInternalServerError)
 		return
@@ -567,7 +1161,6 @@ func handleVaultGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := VaultGetResponse{
-		Version: ver,
 		BlobB64: base64.StdEncoding.EncodeToString(blob),
 	}
 	writeJSON(w, resp, http.StatusOK)
@@ -583,7 +1176,8 @@ func handleVaultPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := ensureUser(userID); err != nil {
-		http.Error(w, "db", http.StatusInternalServerError)
+		log.Printf("vault ensureUser: %v", err)
+		http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	var body VaultPutRequest
@@ -606,42 +1200,111 @@ func handleVaultPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newV, err2, cur := putVault(userID, body.Version, blob)
-	if err2 != nil {
-		if err2.Error() == "conflict" {
-			w.WriteHeader(http.StatusConflict)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"error":          "version_conflict",
-				"currentVersion": cur,
-			})
-			return
-		}
-		http.Error(w, "db", http.StatusInternalServerError)
+	if err := putVault(userID, blob); err != nil {
+		log.Printf("vault put error: %v", err)
+		http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	writeJSON(w, VaultPutResponse{Ok: true, NewVersion: newV}, http.StatusOK)
+	writeJSON(w, VaultPutResponse{Ok: true}, http.StatusOK)
+}
+
+/* ---- Generator Settings Handlers ---- */
+
+func handleGeneratorGet(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserIDFromCookie(w, r)
+	if !ok {
+		return
+	}
+	if err := ensureUser(userID); err != nil {
+		http.Error(w, "db", http.StatusInternalServerError)
+		return
+	}
+	blob, found, err := getGeneratorSettings(userID)
+	if err != nil {
+		http.Error(w, "db", http.StatusInternalServerError)
+		return
+	}
+	if !found {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	resp := GeneratorGetResponse{
+		BlobB64: base64.StdEncoding.EncodeToString(blob),
+	}
+	writeJSON(w, resp, http.StatusOK)
+}
+
+func handleGeneratorPut(w http.ResponseWriter, r *http.Request) {
+	if !allow(clientIP(r), 10) { // 10 req/s für Generator-Settings
+		http.Error(w, "too many requests", http.StatusTooManyRequests)
+		return
+	}
+	userID, ok := requireUserIDFromCookie(w, r)
+	if !ok {
+		return
+	}
+	if err := ensureUser(userID); err != nil {
+		log.Printf("generator ensureUser: %v", err)
+		http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var body GeneratorPutRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if body.BlobB64 == "" {
+		http.Error(w, "blob required", http.StatusBadRequest)
+		return
+	}
+	blob, err := base64.StdEncoding.DecodeString(body.BlobB64)
+	if err != nil {
+		http.Error(w, "blob b64", http.StatusBadRequest)
+		return
+	}
+	// Begrenzung (z. B. 100KB für Settings)
+	if len(blob) > 100*1024 {
+		http.Error(w, "blob too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	if err := putGeneratorSettings(userID, blob); err != nil {
+		log.Printf("generator put error: %v", err)
+		http.Error(w, "db: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]bool{"ok": true}, http.StatusOK)
 }
 
 /* ========= main ========= */
 
 func main() {
+	// Load .env file if it exists (ignore error if not found)
+	_ = godotenv.Load()
+
 	if err := initDB(); err != nil {
 		log.Fatalf("db init: %v", err)
 	}
 	go cleanupLoop()
 
-	http.HandleFunc("/health", handleHealth)
+	http.HandleFunc("/health", corsMiddleware(handleHealth))
+
+	// Auth
+	http.HandleFunc("/api/v1/auth/register", corsMiddleware(handleRegister))
+	http.HandleFunc("/api/v1/auth/login", corsMiddleware(handleLogin))
+	http.HandleFunc("/api/v1/auth/logout", corsMiddleware(handleLogout))
+	http.HandleFunc("/api/v1/auth/me", corsMiddleware(handleMe))
 
 	// QR Auth
-	http.HandleFunc("/api/v1/qr/challenge", handleCreateChallenge)
+	http.HandleFunc("/api/v1/qr/challenge", corsMiddleware(handleCreateChallenge))
 	http.HandleFunc("/api/v1/qr/wait", handleWaitWS)
-	http.HandleFunc("/api/v1/qr/confirm", handleConfirm)
-	http.HandleFunc("/api/v1/qr/exchange", handleExchange)
-	http.HandleFunc("/api/v1/auth/me", handleMe)
+	http.HandleFunc("/api/v1/qr/confirm", corsMiddleware(handleConfirm))
+	http.HandleFunc("/api/v1/qr/exchange", corsMiddleware(handleExchange))
 
 	// Vault
-	http.HandleFunc("/api/v1/vault", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/api/v1/vault", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			handleVaultGet(w, r)
@@ -650,7 +1313,19 @@ func main() {
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
-	})
+	}))
+
+	// Generator Settings
+	http.HandleFunc("/api/v1/generator-settings", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			handleGeneratorGet(w, r)
+		case http.MethodPut:
+			handleGeneratorPut(w, r)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
 
 	addr := ":8080"
 	log.Printf("auth-api listening on %s", addr)

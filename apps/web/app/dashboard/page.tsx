@@ -1,8 +1,7 @@
-export default function Dashboard() {
-  return (
-    <section>
-      <h1>🏠 Dashboard (Demo)</h1>
-      <p>Wenn du hier bist, hat der Token-Exchange geklappt und das Cookie liegt im Browser.</p>
-    </section>
-  );
+import { requireSession } from '../../lib/auth';
+import DashboardClient from './DashboardClient';
+
+export default async function DashboardPage() {
+  await requireSession();
+  return <DashboardClient />;
 }

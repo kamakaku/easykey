@@ -1,0 +1,676 @@
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+import { getStash, clearStash, GenStash } from '../../lib/stash';
+import AppShell from '../components/AppShell';
+import VaultItem from '../components/VaultItem';
+import { Card, Button, Input, Alert, Badge, Divider } from '../components/UI';
+import { useBeforeLogout } from '../../lib/logout';
+import { useAuth } from '../context/AuthContext';
+import { encryptForStorage, decryptFromStorage } from '../../lib/crypto';
+
+function encodeToBase64(str: string) {
+  if (typeof window === 'undefined') {
+    return Buffer.from(str, 'utf-8').toString('base64');
+  }
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(str);
+  let binary = '';
+  bytes.forEach(b => {
+    binary += String.fromCharCode(b);
+  });
+  return btoa(binary);
+}
+
+function decodeFromBase64(b64: string) {
+  try {
+    if (typeof window === 'undefined') {
+      return Buffer.from(b64, 'base64').toString('utf-8');
+    }
+    const binary = atob(b64);
+    const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return '';
+  }
+}
+
+type VaultGetResp = { blob: string };
+type VaultItemType = {
+  id: number;
+  title: string;
+  username?: string;
+  password: string;
+  url?: string;
+  notes?: string;
+  category?: string;
+  createdAt: string;
+  updatedAt?: string;
+};
+
+// Verfügbare Kategorien mit Farben
+const CATEGORIES = [
+  { id: 'login', label: 'Login', color: 'bg-blue-500/10 text-blue-400 border-blue-500/20' },
+  { id: 'email', label: 'E-Mail', color: 'bg-purple-500/10 text-purple-400 border-purple-500/20' },
+  { id: 'bank', label: 'Bank', color: 'bg-green-500/10 text-green-400 border-green-500/20' },
+  { id: 'card', label: 'Kreditkarte', color: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' },
+  { id: 'social', label: 'Social Media', color: 'bg-pink-500/10 text-pink-400 border-pink-500/20' },
+  { id: 'work', label: 'Arbeit', color: 'bg-orange-500/10 text-orange-400 border-orange-500/20' },
+  { id: 'other', label: 'Sonstige', color: 'bg-slate-500/10 text-slate-400 border-slate-500/20' },
+] as const;
+
+export default function VaultClient() {
+  const { encryptionKey } = useAuth();
+  const [pending, setPending] = useState<GenStash | null>(null);
+  const [items, setItems] = useState<VaultItemType[]>([]);
+  const [pendingSaveAt, setPendingSaveAt] = useState<number | null>(null);
+  const [hasPendingSave, setHasPendingSave] = useState(false);
+  const [status, setStatus] = useState<string>('');
+  const [statusType, setStatusType] = useState<'info' | 'success' | 'warning' | 'error'>('info');
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [viewingItem, setViewingItem] = useState<VaultItemType | null>(null);
+  const [editingItem, setEditingItem] = useState<VaultItemType | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  // Form state
+  const [formTitle, setFormTitle] = useState('');
+  const [formUsername, setFormUsername] = useState('');
+  const [formPassword, setFormPassword] = useState('');
+  const [formUrl, setFormUrl] = useState('');
+  const [formNotes, setFormNotes] = useState('');
+
+  const updateStatus = useCallback((msg: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
+    setStatus(msg);
+    setStatusType(type);
+  }, []);
+
+  const persistVault = useCallback(
+    async (origin: 'manual' | 'logout' = 'manual') => {
+      try {
+        // Prüfe ob Encryption Key vorhanden ist
+        if (!encryptionKey) {
+          const message = 'Kein Encryption Key vorhanden. Bitte neu einloggen.';
+          updateStatus(message, 'error');
+          throw new Error(message);
+        }
+
+        updateStatus(
+          origin === 'manual' ? 'Speichere Vault …' : 'Speichere Vault vor Logout …',
+          'info',
+        );
+        const vaultData = JSON.stringify({ items });
+
+        // Verschlüssele mit AES-GCM
+        const encrypted = await encryptForStorage(vaultData, encryptionKey);
+        const blobB64 = btoa(encrypted); // Base64-kodiere das verschlüsselte Format
+
+        const res = await fetch('/backend/api/v1/vault', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ blob: blobB64 }),
+        });
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          throw new Error(text || `Speichern fehlgeschlagen (Status ${res.status})`);
+        }
+        setHasPendingSave(false);
+        setPendingSaveAt(null);
+        updateStatus(
+          origin === 'manual'
+            ? 'Erfolgreich gespeichert'
+            : 'Vault gespeichert. Logout wird fortgesetzt.',
+          'success',
+        );
+        return true;
+      } catch (e: any) {
+        const message = e?.message || 'Speichern fehlgeschlagen';
+        updateStatus(`Fehler: ${message}`, 'error');
+        setHasPendingSave(true);
+        setPendingSaveAt(Date.now());
+        if (origin === 'logout') {
+          throw new Error(message);
+        }
+        return false;
+      }
+    },
+    [items, encryptionKey, updateStatus],
+  );
+
+  const loadVault = useCallback(async () => {
+    // Prüfe ob Encryption Key vorhanden ist
+    if (!encryptionKey) {
+      updateStatus('Kein Encryption Key vorhanden. Bitte neu einloggen.', 'error');
+      return;
+    }
+
+    updateStatus('Lade Vault …', 'info');
+    const res = await fetch('/backend/api/v1/vault', {
+      cache: 'no-store',
+      credentials: 'include',
+    });
+    if (res.status === 404) {
+      updateStatus('Kein Vault vorhanden (neu anlegen).', 'info');
+      setItems([]);
+      setHasPendingSave(false);
+      setPendingSaveAt(null);
+      return;
+    }
+    if (!res.ok) {
+      updateStatus('Laden fehlgeschlagen', 'error');
+      return;
+    }
+    const j = (await res.json()) as VaultGetResp;
+    try {
+      const blobDecoded = atob(j.blob);
+
+      // Prüfe ob das neue Format (iv:ciphertext) vorliegt
+      if (blobDecoded.includes(':')) {
+        // Neues verschlüsseltes Format
+        const json = await decryptFromStorage(blobDecoded, encryptionKey);
+        const parsed = JSON.parse(json || '{}');
+        setItems(Array.isArray(parsed.items) ? parsed.items : []);
+        setHasPendingSave(false);
+        setPendingSaveAt(null);
+        updateStatus('Erfolgreich geladen', 'success');
+      } else {
+        // Altes Base64-Format → Migration notwendig
+        const json = decodeFromBase64(j.blob);
+        const parsed = JSON.parse(json || '{}');
+        setItems(Array.isArray(parsed.items) ? parsed.items : []);
+        updateStatus('Alte Daten migriert. Wird beim nächsten Speichern verschlüsselt.', 'warning');
+        // Setze hasPendingSave um automatisch neu zu speichern (verschlüsselt)
+        setHasPendingSave(true);
+        setPendingSaveAt(Date.now());
+      }
+    } catch (error) {
+      console.error('Fehler beim Laden:', error);
+      setItems([]);
+      setHasPendingSave(false);
+      setPendingSaveAt(null);
+      updateStatus('Vault konnte nicht entschlüsselt werden. Falsches Passwort oder defekte Daten?', 'error');
+    }
+  }, [encryptionKey, updateStatus]);
+
+  function addPendingItem() {
+    if (!pending) return;
+    const newItem: VaultItemType = {
+      id: Date.now(),
+      title: pending.label || 'Unbenannt',
+      username: '',
+      password: pending.password,
+      createdAt: new Date().toISOString()
+    };
+    setItems([...items, newItem]);
+    updateStatus(`Eintrag "${newItem.title}" hinzugefügt. Speichere …`, 'success');
+    clearStash();
+    setPending(null);
+    setHasPendingSave(true);
+    setPendingSaveAt(Date.now());
+  }
+
+  function openDetailModal(item: VaultItemType) {
+    setViewingItem(item);
+    setShowPassword(false);
+    setCopied(false);
+    setShowDetailModal(true);
+  }
+
+  function openAddModal() {
+    setEditingItem(null);
+    setFormTitle('');
+    setFormUsername('');
+    setFormPassword('');
+    setFormUrl('');
+    setFormNotes('');
+    setShowAddModal(true);
+  }
+
+  function openEditModal(item: VaultItemType) {
+    setShowDetailModal(false);
+    setEditingItem(item);
+    setFormTitle(item.title);
+    setFormUsername(item.username || '');
+    setFormPassword(item.password);
+    setFormUrl(item.url || '');
+    setFormNotes(item.notes || '');
+    setShowAddModal(true);
+  }
+
+  function copyPassword() {
+    if (viewingItem) {
+      navigator.clipboard.writeText(viewingItem.password);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  }
+
+  function copyUsername() {
+    if (viewingItem?.username) {
+      navigator.clipboard.writeText(viewingItem.username);
+    }
+  }
+
+  function saveItem() {
+    if (!formTitle || !formPassword) {
+      updateStatus('Titel und Passwort sind erforderlich', 'error');
+      return;
+    }
+
+    if (editingItem) {
+      // Edit existing item
+      setItems(items.map(item =>
+        item.id === editingItem.id
+          ? {
+              ...item,
+              title: formTitle,
+              username: formUsername,
+              password: formPassword,
+              url: formUrl,
+              notes: formNotes,
+              updatedAt: new Date().toISOString()
+            }
+          : item,
+      ));
+      updateStatus(`Eintrag "${formTitle}" aktualisiert.`, 'success');
+    } else {
+      // Add new item
+      const newItem: VaultItemType = {
+        id: Date.now(),
+        title: formTitle,
+        username: formUsername || undefined,
+        password: formPassword,
+        url: formUrl || undefined,
+        notes: formNotes || undefined,
+        createdAt: new Date().toISOString()
+      };
+      setItems([...items, newItem]);
+      updateStatus(`Eintrag "${formTitle}" hinzugefügt.`, 'success');
+    }
+
+    setShowAddModal(false);
+    setHasPendingSave(true);
+    setPendingSaveAt(Date.now());
+  }
+
+  function deleteItem(itemId: number) {
+    const item = items.find(i => i.id === itemId);
+    setItems(items.filter(i => i.id !== itemId));
+    updateStatus(`Eintrag "${item?.title || 'Unbekannt'}" gelöscht.`, 'warning');
+    setHasPendingSave(true);
+    setPendingSaveAt(Date.now());
+  }
+
+  const saveVault = useCallback(() => {
+    setHasPendingSave(true);
+    setPendingSaveAt(Date.now());
+    void persistVault('manual');
+  }, [persistVault]);
+
+  useEffect(() => {
+    setPending(getStash());
+    loadVault(); // Automatisches Laden beim Öffnen der Seite
+  }, [loadVault]);
+
+  useEffect(() => {
+    if (!pending) return;
+    addPendingItem();
+  }, [pending]);
+
+  const filteredItems = items.filter(item => {
+    const q = searchQuery.toLowerCase();
+    return (
+      item.title.toLowerCase().includes(q) ||
+      (item.username && item.username.toLowerCase().includes(q)) ||
+      (item.url && item.url.toLowerCase().includes(q))
+    );
+  });
+
+  useEffect(() => {
+    updateStatus('Änderungen werden automatisch gespeichert.', 'info');
+  }, []);
+
+  const handleBeforeLogout = useCallback(async () => {
+    if (hasPendingSave) {
+      await persistVault('logout');
+    }
+  }, [hasPendingSave, persistVault]);
+
+  useBeforeLogout(handleBeforeLogout);
+
+  useEffect(() => {
+    if (!hasPendingSave || pendingSaveAt === null) return;
+    const timer = setTimeout(() => {
+      void persistVault('manual');
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [hasPendingSave, pendingSaveAt, persistVault]);
+
+  return (
+    <AppShell>
+      <div className="space-y-6">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-100 mb-2">Vault</h1>
+            <p className="text-slate-400">🔒 Ende-zu-Ende verschlüsselt mit AES-256-GCM</p>
+          </div>
+          <div className="flex gap-3">
+            <Button variant="primary" onClick={saveVault}>
+              Speichern
+            </Button>
+          </div>
+        </div>
+
+        {status && (
+          <Alert variant={statusType}>
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="font-medium">{status}</p>
+              </div>
+              <Badge variant={statusType === 'success' ? 'success' : statusType === 'warning' ? 'warning' : statusType === 'error' ? 'error' : 'info'}>
+                Status
+              </Badge>
+            </div>
+          </Alert>
+        )}
+
+        <div className="grid lg:grid-cols-3 gap-6">
+          <Card className="lg:col-span-2">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-100">Einträge</h2>
+                <p className="text-sm text-slate-400">Verwalte deine Zugangsdaten – Änderungen werden automatisch gespeichert.</p>
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Suche nach Titel, Benutzername oder URL"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="w-full md:w-72"
+                />
+                <Button variant="secondary" onClick={openAddModal}>
+                  Neuer Eintrag
+                </Button>
+              </div>
+            </div>
+
+            <Divider className="mb-6" />
+
+            <div className="space-y-4">
+              {filteredItems.length === 0 ? (
+                <div className="border border-dashed border-slate-700 rounded-xl p-12 text-center bg-slate-800/40">
+                  <svg className="w-12 h-12 text-slate-600 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                  </svg>
+                  <p className="text-slate-400 mb-2">Noch keine Einträge vorhanden.</p>
+                  <Button variant="secondary" onClick={openAddModal}>
+                    Eintrag hinzufügen
+                  </Button>
+                </div>
+              ) : (
+                filteredItems.map(item => (
+                  <VaultItem
+                    key={item.id}
+                    item={item}
+                    onClick={openDetailModal}
+                  />
+                ))
+              )}
+            </div>
+          </Card>
+
+          <Card>
+            <h2 className="text-lg font-semibold text-slate-100 mb-4">Status &amp; Aktionen</h2>
+            <div className="space-y-4 text-sm text-slate-300">
+              <div className="flex items-center gap-2">
+                <Badge variant={hasPendingSave ? 'warning' : 'success'}>
+                  {hasPendingSave ? 'Speichern ausstehend' : 'Alle Änderungen gespeichert'}
+                </Badge>
+                <span className="text-xs text-slate-400">Auto-Save aktiv</span>
+              </div>
+              <p>
+                Dein Vault wird wenige Sekunden nach jeder Änderung automatisch auf dem Server gespeichert.
+                Du kannst den aktuellen Stand zusätzlich manuell sichern.
+              </p>
+              <Divider />
+              <div className="space-y-2">
+                <Button variant="secondary" onClick={saveVault}>
+                  Jetzt speichern
+                </Button>
+                <Button variant="ghost" onClick={() => { clearStash(); setPending(null); updateStatus('Zwischenspeicher geleert.', 'info'); }}>
+                  Generator-Zwischenspeicher löschen
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </div>
+
+        {/* Detail Modal */}
+        {showDetailModal && viewingItem && (
+          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <Card className="max-w-lg w-full bg-slate-900 border-slate-600 space-y-4 relative">
+              <button
+                onClick={() => setShowDetailModal(false)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-slate-100"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+
+              {/* Header */}
+              <div className="flex items-center gap-3 pr-8">
+                <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg shadow-indigo-500/20">
+                  <span className="text-white text-xl font-bold">
+                    {viewingItem.title.charAt(0).toUpperCase()}
+                  </span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-xl font-semibold text-slate-100">{viewingItem.title}</h3>
+                  {viewingItem.url && (
+                    <a
+                      href={viewingItem.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-indigo-400 hover:text-indigo-300 truncate block"
+                    >
+                      {viewingItem.url}
+                    </a>
+                  )}
+                </div>
+              </div>
+
+              <Divider />
+
+              {/* Details */}
+              <div className="space-y-4">
+                {/* Username */}
+                {viewingItem.username && (
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-2">Benutzername</label>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 text-sm text-slate-300 bg-slate-800 px-3 py-2 rounded-lg border border-slate-700 truncate">
+                        {viewingItem.username}
+                      </code>
+                      <button
+                        onClick={copyUsername}
+                        className="p-2 hover:bg-slate-700/50 rounded-lg transition-colors flex-shrink-0"
+                        title="Kopieren"
+                      >
+                        <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Password */}
+                <div>
+                  <label className="text-xs text-slate-400 block mb-2">Passwort</label>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 text-sm text-slate-300 bg-slate-800 px-3 py-2 rounded-lg border border-slate-700 font-mono truncate">
+                      {showPassword ? viewingItem.password : '••••••••••••'}
+                    </code>
+                    <button
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="p-2 hover:bg-slate-700/50 rounded-lg transition-colors flex-shrink-0"
+                      title={showPassword ? 'Verbergen' : 'Anzeigen'}
+                    >
+                      {showPassword ? (
+                        <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                        </svg>
+                      ) : (
+                        <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                      )}
+                    </button>
+                    <button
+                      onClick={copyPassword}
+                      className="p-2 hover:bg-slate-700/50 rounded-lg transition-colors flex-shrink-0"
+                      title="Kopieren"
+                    >
+                      {copied ? (
+                        <svg className="w-5 h-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                      ) : (
+                        <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Notes */}
+                {viewingItem.notes && (
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-2">Notizen</label>
+                    <div className="text-sm text-slate-300 bg-slate-800 px-3 py-2 rounded-lg border border-slate-700">
+                      {viewingItem.notes}
+                    </div>
+                  </div>
+                )}
+
+                {/* Created Date */}
+                <div>
+                  <label className="text-xs text-slate-400 block mb-2">Erstellt am</label>
+                  <div className="text-sm text-slate-300">
+                    {new Date(viewingItem.createdAt).toLocaleDateString('de-DE', {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              <Divider />
+
+              {/* Actions */}
+              <div className="flex gap-3">
+                <Button
+                  variant="secondary"
+                  className="flex-1"
+                  onClick={() => openEditModal(viewingItem)}
+                >
+                  <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                  Bearbeiten
+                </Button>
+                <button
+                  onClick={() => {
+                    if (confirm(`Möchtest du "${viewingItem.title}" wirklich löschen?`)) {
+                      deleteItem(viewingItem.id);
+                      setShowDetailModal(false);
+                    }
+                  }}
+                  className="px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg transition-colors border border-red-500/20"
+                  title="Löschen"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* Add/Edit Modal */}
+        {showAddModal && (
+          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <Card className="max-w-lg w-full bg-slate-900 border-slate-600 space-y-4 relative">
+              <button
+                onClick={() => setShowAddModal(false)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-slate-100"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+
+              <h3 className="text-xl font-semibold text-slate-100">
+                {editingItem ? 'Eintrag bearbeiten' : 'Neuer Eintrag'}
+              </h3>
+
+              <div className="space-y-3">
+                <Input
+                  label="Titel"
+                  value={formTitle}
+                  onChange={e => setFormTitle(e.target.value)}
+                  placeholder="z. B. Mail-Account"
+                  required
+                />
+                <Input
+                  label="Benutzername"
+                  value={formUsername}
+                  onChange={e => setFormUsername(e.target.value)}
+                />
+                <Input
+                  label="Passwort"
+                  value={formPassword}
+                  onChange={e => setFormPassword(e.target.value)}
+                  required
+                />
+                <Input
+                  label="URL"
+                  value={formUrl}
+                  onChange={e => setFormUrl(e.target.value)}
+                  placeholder="https://"
+                />
+                <Input
+                  label="Notizen"
+                  value={formNotes}
+                  onChange={e => setFormNotes(e.target.value)}
+                  placeholder="Zusätzliche Informationen"
+                />
+              </div>
+
+              <Divider />
+
+              <div className="flex justify-end gap-3">
+                <Button variant="ghost" onClick={() => setShowAddModal(false)}>
+                  Abbrechen
+                </Button>
+                <Button variant="primary" onClick={saveItem}>
+                  {editingItem ? 'Aktualisieren' : 'Hinzufügen'}
+                </Button>
+              </div>
+            </Card>
+          </div>
+        )}
+      </div>
+    </AppShell>
+  );
+}

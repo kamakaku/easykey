@@ -1,0 +1,13 @@
+
+> @easykey/extension@0.1.0 dev /Users/kamakaku/_easykey/_anwendung/apps/extension
+> tsc -w
+
+[2J[3J[H[[90m12:34:47[0m] Starting compilation in watch mode...
+
+[96msrc/background.ts[0m:[93m1[0m:[93m1[0m - [91merror[0m[90m TS2304: [0mCannot find name 'chrome'.
+
+[7m1[0m chrome.runtime.onInstalled.addListener(() => {
+[7m [0m [91m~~~~~~[0m
+
+[[90m12:34:48[0m] Found 1 error. Watching for file changes.
+
