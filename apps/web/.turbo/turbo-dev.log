@@ -2,52 +2,14 @@
 > @easykey/web@0.1.0 dev /Users/kamakaku/_easykey/_anwendung/apps/web
 > next dev
 
+ [33m[1m⚠[22m[39m Port 3000 is in use, trying 3001 instead.
+ [33m[1m⚠[22m[39m Port 3001 is in use, trying 3002 instead.
+ [33m[1m⚠[22m[39m Port 3002 is in use, trying 3003 instead.
+ [33m[1m⚠[22m[39m Port 3003 is in use, trying 3004 instead.
+ [33m[1m⚠[22m[39m Port 3004 is in use, trying 3005 instead.
   [1m[38;2;173;127;168m▲ Next.js 14.2.10[39m[22m
-  - Local:        http://localhost:3000
+  - Local:        http://localhost:3005
   - Environments: .env.local
 
  [32m[1m✓[22m[39m Starting...
- [32m[1m✓[22m[39m Ready in 1330ms
- [37m[1m○[22m[39m Compiling /dashboard ...
- [32m[1m✓[22m[39m Compiled /dashboard in 504ms (535 modules)
- GET /dashboard [32m200[39m in 609ms
-(node:1646) [DEP0060] DeprecationWarning: The `util._extend` API is deprecated. Please use Object.assign() instead.
-(Use `node --trace-deprecation ...` to show where the warning was created)
-Failed to proxy http://127.0.0.1:8080/health Error: connect ECONNREFUSED 127.0.0.1:8080
-[90m    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1636:16)[39m
-[90m    at TCPConnectWrap.callbackTrampoline (node:internal/async_hooks:130:17)[39m {
-  errno: [33m-61[39m,
-  code: [32m'ECONNREFUSED'[39m,
-  syscall: [32m'connect'[39m,
-  address: [32m'127.0.0.1'[39m,
-  port: [33m8080[39m
-}
-Error: connect ECONNREFUSED 127.0.0.1:8080
-[90m    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1636:16)[39m
-[90m    at TCPConnectWrap.callbackTrampoline (node:internal/async_hooks:130:17)[39m {
-  errno: [33m-61[39m,
-  code: [32m'ECONNREFUSED'[39m,
-  syscall: [32m'connect'[39m,
-  address: [32m'127.0.0.1'[39m,
-  port: [33m8080[39m
-}
-Failed to proxy http://127.0.0.1:8080/health Error: connect ECONNREFUSED 127.0.0.1:8080
-[90m    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1636:16)[39m
-[90m    at TCPConnectWrap.callbackTrampoline (node:internal/async_hooks:130:17)[39m {
-  errno: [33m-61[39m,
-  code: [32m'ECONNREFUSED'[39m,
-  syscall: [32m'connect'[39m,
-  address: [32m'127.0.0.1'[39m,
-  port: [33m8080[39m
-}
-Error: connect ECONNREFUSED 127.0.0.1:8080
-[90m    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1636:16)[39m
-[90m    at TCPConnectWrap.callbackTrampoline (node:internal/async_hooks:130:17)[39m {
-  errno: [33m-61[39m,
-  code: [32m'ECONNREFUSED'[39m,
-  syscall: [32m'connect'[39m,
-  address: [32m'127.0.0.1'[39m,
-  port: [33m8080[39m
-}
- [32m[1m✓[22m[39m Compiled /_error in 229ms (768 modules)
-[?25h
+ [32m[1m✓[22m[39m Ready in 1524ms

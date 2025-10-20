@@ -36,6 +36,7 @@ function decodeFromBase64(b64: string) {
 }
 
 type VaultGetResp = { blob: string };
+// Definiere eine erweiterte Vault-Datenstruktur
 type VaultItemType = {
   id: number;
   title: string;
@@ -43,9 +44,15 @@ type VaultItemType = {
   password: string;
   url?: string;
   notes?: string;
-  category?: string;
+  category?: string; // ID der Kategorie
   createdAt: string;
   updatedAt?: string;
+};
+
+// Erweiterte Vault-Datenstruktur mit Metadaten
+type VaultData = {
+  items: VaultItemType[];
+  customCategories?: {id: string, label: string, color: string}[];
 };
 
 // Verfügbare Kategorien mit Farben
@@ -59,10 +66,13 @@ const CATEGORIES = [
   { id: 'other', label: 'Sonstige', color: 'bg-slate-500/10 text-slate-400 border-slate-500/20' },
 ] as const;
 
+
+
 export default function VaultClient() {
   const { encryptionKey } = useAuth();
   const [pending, setPending] = useState<GenStash | null>(null);
   const [items, setItems] = useState<VaultItemType[]>([]);
+  const [vaultCustomCategories, setVaultCustomCategories] = useState<{id: string, label: string, color: string}[]>([]);
   const [pendingSaveAt, setPendingSaveAt] = useState<number | null>(null);
   const [hasPendingSave, setHasPendingSave] = useState(false);
   const [status, setStatus] = useState<string>('');
@@ -81,6 +91,13 @@ export default function VaultClient() {
   const [formPassword, setFormPassword] = useState('');
   const [formUrl, setFormUrl] = useState('');
   const [formNotes, setFormNotes] = useState('');
+  const [formCategory, setFormCategory] = useState<string>('');
+
+  // Zustand für Kategorien
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
+  const [customCategories, setCustomCategories] = useState<{id: string, label: string, color: string}[]>([]);
+  const [showAddCategory, setShowAddCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
 
   const updateStatus = useCallback((msg: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
     setStatus(msg);
@@ -101,7 +118,7 @@ export default function VaultClient() {
           origin === 'manual' ? 'Speichere Vault …' : 'Speichere Vault vor Logout …',
           'info',
         );
-        const vaultData = JSON.stringify({ items });
+        const vaultData = JSON.stringify({ items, customCategories: customCategories });
 
         // Verschlüssele mit AES-GCM
         const encrypted = await encryptForStorage(vaultData, encryptionKey);
@@ -155,6 +172,8 @@ export default function VaultClient() {
     if (res.status === 404) {
       updateStatus('Kein Vault vorhanden (neu anlegen).', 'info');
       setItems([]);
+      // Initialisiere auch leere benutzerdefinierte Kategorien
+      setCustomCategories([]);
       setHasPendingSave(false);
       setPendingSaveAt(null);
       return;
@@ -173,6 +192,10 @@ export default function VaultClient() {
         const json = await decryptFromStorage(blobDecoded, encryptionKey);
         const parsed = JSON.parse(json || '{}');
         setItems(Array.isArray(parsed.items) ? parsed.items : []);
+        // Lade auch die gespeicherten benutzerdefinierten Kategorien
+        if (Array.isArray(parsed.customCategories)) {
+          setCustomCategories(parsed.customCategories);
+        }
         setHasPendingSave(false);
         setPendingSaveAt(null);
         updateStatus('Erfolgreich geladen', 'success');
@@ -181,6 +204,10 @@ export default function VaultClient() {
         const json = decodeFromBase64(j.blob);
         const parsed = JSON.parse(json || '{}');
         setItems(Array.isArray(parsed.items) ? parsed.items : []);
+        // Versuche auch alte benutzerdefinierte Kategorien zu laden (falls vorhanden)
+        if (Array.isArray(parsed.customCategories)) {
+          setCustomCategories(parsed.customCategories);
+        }
         updateStatus('Alte Daten migriert. Wird beim nächsten Speichern verschlüsselt.', 'warning');
         // Setze hasPendingSave um automatisch neu zu speichern (verschlüsselt)
         setHasPendingSave(true);
@@ -189,6 +216,8 @@ export default function VaultClient() {
     } catch (error) {
       console.error('Fehler beim Laden:', error);
       setItems([]);
+      // Initialisiere auch leere benutzerdefinierte Kategorien im Fehlerfall
+      setCustomCategories([]);
       setHasPendingSave(false);
       setPendingSaveAt(null);
       updateStatus('Vault konnte nicht entschlüsselt werden. Falsches Passwort oder defekte Daten?', 'error');
@@ -202,6 +231,7 @@ export default function VaultClient() {
       title: pending.label || 'Unbenannt',
       username: '',
       password: pending.password,
+      category: 'login', // Standardkategorie
       createdAt: new Date().toISOString()
     };
     setItems([...items, newItem]);
@@ -226,6 +256,7 @@ export default function VaultClient() {
     setFormPassword('');
     setFormUrl('');
     setFormNotes('');
+    setFormCategory('login'); // Standardkategorie
     setShowAddModal(true);
   }
 
@@ -237,6 +268,7 @@ export default function VaultClient() {
     setFormPassword(item.password);
     setFormUrl(item.url || '');
     setFormNotes(item.notes || '');
+    setFormCategory(item.category || 'login');
     setShowAddModal(true);
   }
 
@@ -271,6 +303,7 @@ export default function VaultClient() {
               password: formPassword,
               url: formUrl,
               notes: formNotes,
+              category: formCategory,
               updatedAt: new Date().toISOString()
             }
           : item,
@@ -285,6 +318,7 @@ export default function VaultClient() {
         password: formPassword,
         url: formUrl || undefined,
         notes: formNotes || undefined,
+        category: formCategory,
         createdAt: new Date().toISOString()
       };
       setItems([...items, newItem]);
@@ -322,16 +356,80 @@ export default function VaultClient() {
 
   const filteredItems = items.filter(item => {
     const q = searchQuery.toLowerCase();
-    return (
+    const matchesSearch = (
       item.title.toLowerCase().includes(q) ||
       (item.username && item.username.toLowerCase().includes(q)) ||
       (item.url && item.url.toLowerCase().includes(q))
     );
+    
+    // Filter by category if not 'all'
+    const matchesCategory = selectedCategoryFilter === 'all' || item.category === selectedCategoryFilter;
+    
+    return matchesSearch && matchesCategory;
   });
 
   useEffect(() => {
     updateStatus('Änderungen werden automatisch gespeichert.', 'info');
   }, []);
+
+  // Helper function to get category info by ID
+  function getCategoryInfo(categoryId: string) {
+    const predefinedCategory = CATEGORIES.find(cat => cat.id === categoryId);
+    if (predefinedCategory) {
+      return predefinedCategory;
+    }
+    
+    const customCategory = customCategories.find(cat => cat.id === categoryId);
+    if (customCategory) {
+      return customCategory;
+    }
+    
+    // Default category if not found
+    return CATEGORIES[CATEGORIES.length - 1]; // 'other' category
+  }
+
+  function addCustomCategory() {
+    if (!newCategoryName.trim()) return;
+    
+    // Check if category already exists
+    const existingCategory = [...CATEGORIES, ...customCategories].find(
+      cat => cat.id === newCategoryName.trim().toLowerCase().replace(/\s+/g, '-')
+    );
+    
+    if (existingCategory) {
+      updateStatus(`Kategorie "${existingCategory.label}" existiert bereits.`, 'warning');
+      return;
+    }
+    
+    // Create a unique ID for the new category
+    const newCategoryId = newCategoryName.trim().toLowerCase().replace(/\s+/g, '-');
+    
+    // Select a random pre-defined color class for consistency
+    const predefinedColors = [
+      'bg-rose-500/10 text-rose-400 border-rose-500/20',
+      'bg-amber-500/10 text-amber-400 border-amber-500/20',
+      'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+      'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
+      'bg-violet-500/10 text-violet-400 border-violet-500/20',
+      'bg-fuchsia-500/10 text-fuchsia-400 border-fuchsia-500/20',
+    ];
+    
+    const randomColor = predefinedColors[Math.floor(Math.random() * predefinedColors.length)];
+    
+    const newCategory = {
+      id: newCategoryId,
+      label: newCategoryName.trim(),
+      color: randomColor
+    };
+    
+    setCustomCategories([...customCategories, newCategory]);
+    setNewCategoryName('');
+    setShowAddCategory(false);
+    // Markiere als "zu speichern", damit die neuen Kategorien gespeichert werden
+    setHasPendingSave(true);
+    setPendingSaveAt(Date.now());
+    updateStatus(`Kategorie "${newCategory.label}" hinzugefügt.`, 'success');
+  }
 
   const handleBeforeLogout = useCallback(async () => {
     if (hasPendingSave) {
@@ -385,15 +483,31 @@ export default function VaultClient() {
                 <p className="text-sm text-slate-400">Verwalte deine Zugangsdaten – Änderungen werden automatisch gespeichert.</p>
               </div>
               <div className="flex gap-2">
-                <Input
-                  placeholder="Suche nach Titel, Benutzername oder URL"
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  className="w-full md:w-72"
-                />
-                <Button variant="secondary" onClick={openAddModal}>
-                  Neuer Eintrag
-                </Button>
+                <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+                  <Input
+                    placeholder="Suche nach Titel, Benutzername oder URL"
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    className="w-full sm:w-64 mb-2 sm:mb-0 sm:mr-2"
+                  />
+                  <div className="flex gap-2">
+                    <select
+                      value={selectedCategoryFilter}
+                      onChange={e => setSelectedCategoryFilter(e.target.value)}
+                      className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    >
+                      <option value="all">Alle Kategorien</option>
+                      {([...CATEGORIES, ...customCategories] as {id: string, label: string, color: string}[]).map(category => (
+                        <option key={category.id} value={category.id}>
+                          {category.label}
+                        </option>
+                      ))}
+                    </select>
+                    <Button variant="secondary" onClick={openAddModal}>
+                      Neuer Eintrag
+                    </Button>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -423,19 +537,70 @@ export default function VaultClient() {
           </Card>
 
           <Card>
-            <h2 className="text-lg font-semibold text-slate-100 mb-4">Status &amp; Aktionen</h2>
+            <h2 className="text-lg font-semibold text-slate-100 mb-4">Kategorien verwalten</h2>
             <div className="space-y-4 text-sm text-slate-300">
-              <div className="flex items-center gap-2">
-                <Badge variant={hasPendingSave ? 'warning' : 'success'}>
-                  {hasPendingSave ? 'Speichern ausstehend' : 'Alle Änderungen gespeichert'}
-                </Badge>
-                <span className="text-xs text-slate-400">Auto-Save aktiv</span>
-              </div>
               <p>
-                Dein Vault wird wenige Sekunden nach jeder Änderung automatisch auf dem Server gespeichert.
-                Du kannst den aktuellen Stand zusätzlich manuell sichern.
+                Verwalte Kategorien für deine Passwörter, um sie besser organisieren zu können.
               </p>
+              
               <Divider />
+              
+              <div className="space-y-3">
+                <h3 className="font-medium text-slate-200">Vordefinierte Kategorien</h3>
+                <div className="flex flex-wrap gap-2">
+                  {CATEGORIES.map(category => (
+                    <span 
+                      key={category.id} 
+                      className={`px-2 py-1 rounded text-xs ${category.color}`}
+                    >
+                      {category.label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              
+              <Divider />
+              
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-medium text-slate-200">Eigene Kategorien</h3>
+                  <Button variant="ghost" size="sm" onClick={() => setShowAddCategory(true)}>
+                    + Neu
+                  </Button>
+                </div>
+                
+                {customCategories.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {customCategories.map(category => (
+                      <div key={category.id} className="flex items-center gap-1">
+                        <span className={`px-2 py-1 rounded text-xs ${category.color}`}>
+                          {category.label}
+                        </span>
+                        <button
+                          onClick={() => {
+                            setCustomCategories(customCategories.filter(c => c.id !== category.id));
+                            // Markiere als "zu speichern", damit die Änderung gespeichert wird
+                            setHasPendingSave(true);
+                            setPendingSaveAt(Date.now());
+                            updateStatus(`Kategorie "${category.label}" entfernt.`, 'warning');
+                          }}
+                          className="text-slate-500 hover:text-slate-300 p-1"
+                          title="Kategorie entfernen"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-slate-500 text-sm italic">Keine eigenen Kategorien erstellt</p>
+                )}
+              </div>
+              
+              <Divider />
+              
               <div className="space-y-2">
                 <Button variant="secondary" onClick={saveVault}>
                   Jetzt speichern
@@ -559,6 +724,24 @@ export default function VaultClient() {
                   </div>
                 )}
 
+                {/* Category */}
+                {viewingItem.category && (
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-2">Kategorie</label>
+                    <div className={`inline-block px-2.5 py-1 rounded text-sm ${
+                      (() => {
+                        const categoryInfo = [...CATEGORIES, ...customCategories].find(cat => cat.id === viewingItem.category);
+                        return categoryInfo ? categoryInfo.color : CATEGORIES[CATEGORIES.length - 1].color; // fallback to 'other'
+                      })()
+                    }`}>
+                      {(() => {
+                        const categoryInfo = [...CATEGORIES, ...customCategories].find(cat => cat.id === viewingItem.category);
+                        return categoryInfo ? categoryInfo.label : 'Sonstige'; // fallback to 'Sonstige'
+                      })()}
+                    </div>
+                  </div>
+                )}
+
                 {/* Created Date */}
                 <div>
                   <label className="text-xs text-slate-400 block mb-2">Erstellt am</label>
@@ -655,6 +838,27 @@ export default function VaultClient() {
                   onChange={e => setFormNotes(e.target.value)}
                   placeholder="Zusätzliche Informationen"
                 />
+                
+                {/* Category Selection */}
+                <div>
+                  <label className="text-sm font-medium text-slate-300 block mb-2">Kategorie</label>
+                  <div className="flex flex-wrap gap-2">
+                    {([...CATEGORIES, ...customCategories] as {id: string, label: string, color: string}[]).map(category => (
+                      <button
+                        key={category.id}
+                        type="button"
+                        onClick={() => setFormCategory(category.id)}
+                        className={`px-3 py-1.5 rounded-lg border text-sm transition-colors ${
+                          formCategory === category.id
+                            ? `${category.color} ring-2 ring-offset-2 ring-offset-slate-900 ring-slate-500`
+                            : 'bg-slate-800/50 text-slate-400 border-slate-700 hover:bg-slate-700/50'
+                        }`}
+                      >
+                        {category.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
               <Divider />
@@ -665,6 +869,45 @@ export default function VaultClient() {
                 </Button>
                 <Button variant="primary" onClick={saveItem}>
                   {editingItem ? 'Aktualisieren' : 'Hinzufügen'}
+                </Button>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* Custom Category Modal */}
+        {showAddCategory && (
+          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <Card className="max-w-md w-full bg-slate-900 border-slate-600 space-y-4 relative">
+              <button
+                onClick={() => setShowAddCategory(false)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-slate-100"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+
+              <h3 className="text-xl font-semibold text-slate-100">Neue Kategorie</h3>
+              
+              <div className="space-y-3">
+                <Input
+                  label="Kategoriename"
+                  value={newCategoryName}
+                  onChange={e => setNewCategoryName(e.target.value)}
+                  placeholder="z. B. E-Commerce, Soziale Netzwerke"
+                  required
+                />
+              </div>
+
+              <Divider />
+
+              <div className="flex justify-end gap-3">
+                <Button variant="ghost" onClick={() => setShowAddCategory(false)}>
+                  Abbrechen
+                </Button>
+                <Button variant="primary" onClick={addCustomCategory}>
+                  Erstellen
                 </Button>
               </div>
             </Card>

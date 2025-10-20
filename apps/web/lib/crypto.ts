@@ -15,7 +15,7 @@ export interface EncryptionResult {
  */
 export async function deriveKey(
   password: string,
-  salt: Uint8Array
+  salt: ArrayBuffer
 ): Promise<CryptoKey> {
   const encoder = new TextEncoder();
   const passwordBuffer = encoder.encode(password);
@@ -33,7 +33,7 @@ export async function deriveKey(
   return crypto.subtle.deriveKey(
     {
       name: 'PBKDF2',
-      salt: salt,
+      salt,
       iterations: 100000,
       hash: 'SHA-256',
     },
@@ -69,7 +69,9 @@ export async function generateKeyFromPassword(
   password: string
 ): Promise<{ key: CryptoKey; salt: Uint8Array }> {
   const salt = await generateDeterministicSalt(password);
-  const key = await deriveKey(password, salt);
+  const saltCopy = new Uint8Array(salt);
+  const saltBuffer = saltCopy.buffer as ArrayBuffer;
+  const key = await deriveKey(password, saltBuffer);
   return { key, salt };
 }
 
@@ -98,7 +100,8 @@ export async function encrypt(
 
   // Konvertiere zu Base64
   const ciphertext = arrayBufferToBase64(ciphertextBuffer);
-  const ivBase64 = arrayBufferToBase64(iv);
+  const ivCopy = new Uint8Array(iv);
+  const ivBase64 = arrayBufferToBase64(ivCopy.buffer as ArrayBuffer);
 
   // Salt aus Key exportieren (für spätere Key-Rekonstruktion)
   // Da wir den Key aber in der Session behalten, brauchen wir das Salt hier nicht

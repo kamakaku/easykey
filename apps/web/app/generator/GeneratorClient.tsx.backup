@@ -53,7 +53,6 @@ export default function GeneratorClient() {
   const [includeNumbers, setIncludeNumbers] = useState(true);
   const [includeSymbols, setIncludeSymbols] = useState(true);
   const [excludeChars, setExcludeChars] = useState('');
-  const [settingsMode, setSettingsMode] = useState<'automatic' | 'manual'>('automatic');
 
   const [password, setPassword] = useState('');
   const [copied, setCopied] = useState(false);
@@ -176,9 +175,6 @@ export default function GeneratorClient() {
     if (data.includeNumbers !== undefined) setIncludeNumbers(data.includeNumbers);
     if (data.includeSymbols !== undefined) setIncludeSymbols(data.includeSymbols);
     if (data.excludeChars) setExcludeChars(data.excludeChars);
-    if (data.settingsMode === 'automatic' || data.settingsMode === 'manual') {
-      setSettingsMode(data.settingsMode);
-    }
   }
 
   // Speichere Daten automatisch bei Änderungen
@@ -210,7 +206,6 @@ export default function GeneratorClient() {
         includeNumbers,
         includeSymbols,
         excludeChars,
-        settingsMode,
       };
 
       // Speichere auch lokal als Backup
@@ -266,29 +261,8 @@ export default function GeneratorClient() {
     includeNumbers,
     includeSymbols,
     excludeChars,
-    settingsMode,
     encryptionKey,
   ]);
-
-  useEffect(() => {
-    if (mode !== 'personal') return;
-    if (settingsMode !== 'automatic') return;
-
-    const config = getAutomaticSettingsForLevel(crypticLevel);
-
-    if (replaceChars !== config.replaceChars) {
-      setReplaceChars(config.replaceChars);
-    }
-    if (includeSymbols !== config.includeSymbols) {
-      setIncludeSymbols(config.includeSymbols);
-    }
-    if (separator !== config.separator) {
-      setSeparator(config.separator);
-    }
-    if (caseMode !== config.caseMode) {
-      setCaseMode(config.caseMode);
-    }
-  }, [mode, settingsMode, crypticLevel, replaceChars, includeSymbols, separator, caseMode]);
 
   function addCustomField() {
     setCustomFields([...customFields, { id: Date.now().toString(), value: '' }]);
@@ -304,60 +278,22 @@ export default function GeneratorClient() {
     ));
   }
 
-  function getAutomaticSettingsForLevel(level: number) {
-    switch (level) {
-      case 1:
-        return {
-          replaceChars: false,
-          includeSymbols: false,
-          separator: 'none' as const,
-          caseMode: 'original' as const,
-        };
-      case 2:
-        return {
-          replaceChars: true,
-          includeSymbols: false,
-          separator: 'none' as const,
-          caseMode: 'alternate' as const,
-        };
-      case 3:
-        return {
-          replaceChars: true,
-          includeSymbols: true,
-          separator: 'dash' as const,
-          caseMode: 'alternate' as const,
-        };
-      case 4:
-        return {
-          replaceChars: true,
-          includeSymbols: true,
-          separator: 'random' as const,
-          caseMode: 'alternate' as const,
-        };
-      case 5:
-      default:
-        return {
-          replaceChars: true,
-          includeSymbols: true,
-          separator: 'random' as const,
-          caseMode: 'upper' as const,
-        };
-    }
-  }
-
   function extractByLevel(text: string, level: number): string {
     if (!text) return '';
 
-    if (settingsMode === 'manual') {
-      return text;
+    switch (level) {
+      case 1: // Nur erster Buchstabe
+        return text.charAt(0);
+      case 2: // Erste 2 Zeichen
+        return text.substring(0, 2);
+      case 3: // Erste Hälfte
+        return text.substring(0, Math.ceil(text.length / 2));
+      case 4: // Fast alles (3/4)
+        return text.substring(0, Math.ceil(text.length * 0.75));
+      case 5: // Alles
+      default:
+        return text;
     }
-
-    // Map Level 1-5 auf prozentualen Anteil pro Datenblock (25% → 100%)
-    const ratios = [0.25, 0.4, 0.6, 0.8, 1];
-    const index = Math.min(Math.max(level, 1), 5) - 1;
-    const ratio = ratios[index];
-    const targetLength = Math.max(1, Math.round(text.length * ratio));
-    return text.substring(0, Math.min(targetLength, text.length));
   }
 
   // Hilfsfunktion um Datum von YYYY-MM-DD nach DDMMYYYY zu konvertieren
@@ -673,8 +609,6 @@ export default function GeneratorClient() {
 
   function transformPassword(base: string, level: number, variation: number): string {
     let result = '';
-    const manualFallbackLevel = 3;
-    const effectiveLevel = settingsMode === 'manual' ? manualFallbackLevel : level;
 
     for (let i = 0; i < base.length; i++) {
       let char = base[i];
@@ -687,7 +621,7 @@ export default function GeneratorClient() {
       }
 
       // Wenn "Zeichen ersetzen" AKTIVIERT ist: Transformation basierend auf Level
-      switch (effectiveLevel) {
+      switch (level) {
         case 1: // Nur Groß/Kleinschreibung nach Mode
           result += applyCaseMode(char, i, variation);
           break;
@@ -701,7 +635,7 @@ export default function GeneratorClient() {
         case 3: // + Leet-Speak
           const leet: any = { 'a': '4', 'e': '3', 'i': '1', 'o': '0', 's': '5', 't': '7' };
           const lowerChar = char.toLowerCase();
-          if (leet[lowerChar]) { // Nur ähnliche Buchstaben ersetzen, aber mit caseMode anwenden
+          if ((i + variation) % 3 === 0 && leet[lowerChar]) {
             result += leet[lowerChar];
           } else {
             result += applyCaseMode(char, i, variation);
@@ -927,34 +861,22 @@ export default function GeneratorClient() {
   // Funktion zur Passwort-Generierung aus Blöcken (für Personal-Modus)
   // Funktion zur Passwort-Generierung aus Blöcken (für Personal-Modus)
   // Funktion zur Passwort-Generierung aus Blöcken (für Personal-Modus)
-  // Funktion zur Passwort-Generierung aus Blöcken (für Personal-Modus)
-  // Funktion zur Passwort-Generierung aus Blöcken (für Personal-Modus)
   function generatePasswordFromBlocks(): string {
     // Sammle nur ausgefüllte persönliche Daten
-    let allData = [
+    const allData = [
       firstName,
       lastName,
       formatDateForPassword(birthDate), // Datum im Format DDMMYYYY
       birthPlace,
-      children, // Diese können kommagetrennt sein
+      children,
       favoriteAnimal,
       favoriteColor,
       partnerName,
       formatDateForPassword(weddingDay), // Datum im Format DDMMYYYY
       ...customFields.map(f => f.value)
-    ];
+    ].filter(value => value && value.trim() !== "");
 
-    // Extrahiere kommagetrennte Werte aus Feldern wie children
-    const processedData: string[] = [];
-    for (const data of allData) {
-      if (data && data.trim() !== "") {
-        // Teile kommagetrennte Werte in separate Blöcke
-        const values = data.split(",").map(v => v.trim()).filter(v => v !== "");
-        processedData.push(...values);
-      }
-    }
-
-    if (processedData.length === 0) {
+    if (allData.length === 0) {
       alert("Bitte gib mindestens ein persönliches Datum ein!");
       return "";
     }
@@ -963,8 +885,8 @@ export default function GeneratorClient() {
     const blocks: string[] = [];
     for (let i = 0; i < numBlocks; i++) {
       // Verwende generationCounter als zusätzlichen Seed für Variationen
-      const seed = (generationCounter + i) % processedData.length;
-      let baseText = processedData[seed];
+      const seed = (generationCounter + i) % allData.length;
+      let baseText = allData[seed];
 
       // Extrahiere Text basierend auf Kryptizität
       let block = extractByLevel(baseText, crypticLevel);
@@ -1032,13 +954,6 @@ export default function GeneratorClient() {
 
     return transformedPassword;
   }
-  function copyToClipboard() {
-    if (!password) return;
-    navigator.clipboard.writeText(password);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }
-
   function getPasswordStrength() {
     if (!password) return null;
     const hasUpper = /[A-Z]/.test(password);
@@ -1287,205 +1202,168 @@ export default function GeneratorClient() {
                       </div>
                     )}
 
-                    <div className="space-y-2">
-                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                        <span className="text-sm font-medium text-slate-300">Kryptizität-Steuerung</span>
-                        <div className="grid grid-cols-2 gap-2">
-                          <button
-                            onClick={() => setSettingsMode('automatic')}
-                            className={`px-3 py-2 rounded-lg border ${
-                              settingsMode === 'automatic'
-                                ? 'border-purple-500 bg-purple-500/20 text-purple-100'
-                                : 'border-slate-700 text-slate-300 hover:border-slate-500 hover:text-slate-100'
-                            } transition-all`}
-                          >
-                            Automatisch
-                          </button>
-                          <button
-                            onClick={() => setSettingsMode('manual')}
-                            className={`px-3 py-2 rounded-lg border ${
-                              settingsMode === 'manual'
-                                ? 'border-purple-500 bg-purple-500/20 text-purple-100'
-                                : 'border-slate-700 text-slate-300 hover:border-slate-500 hover:text-slate-100'
-                            } transition-all`}
-                          >
-                            Manuell
-                          </button>
-                        </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-300 mb-2">
+                        Kryptizität: Level {crypticLevel}
+                      </label>
+                      <input
+                        type="range"
+                        min={1}
+                        max={5}
+                        value={crypticLevel}
+                        onChange={e => setCrypticLevel(+e.target.value)}
+                        className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                      />
+                      <div className="text-xs text-slate-400 mt-2 space-y-1">
+                        <p className="font-medium text-slate-300">
+                          {crypticLevel === 1 && '📝 Nur 1. Buchstabe jeder Angabe'}
+                          {crypticLevel === 2 && '📝 Erste 2 Zeichen jeder Angabe'}
+                          {crypticLevel === 3 && '📝 Erste Hälfte jeder Angabe'}
+                          {crypticLevel === 4 && '📝 3/4 jeder Angabe'}
+                          {crypticLevel === 5 && '📝 Vollständige Angaben'}
+                        </p>
+                        <p className="text-slate-500">
+                          Niedrigere Level = leichter zu merken, höhere Level = sicherer
+                        </p>
                       </div>
-                      <p className="text-xs text-slate-500">
-                        {settingsMode === 'automatic'
-                          ? 'System setzt Ersetzungen, Zeichenmix und Trennzeichen anhand des Kryptizitäts-Levels.'
-                          : 'Du steuerst Ersetzungen, Trennzeichen und Groß-/Kleinschreibung komplett selbst.'}
-                      </p>
                     </div>
 
-                    {settingsMode === 'automatic' && (
-                      <div>
-                        <label className="block text-sm font-medium text-slate-300 mb-2">
-                          Kryptizität: Level {crypticLevel}
+                    <div className="space-y-3">
+                      <div className="p-3 bg-slate-800/50 rounded-lg border border-slate-700">
+                        <label className="flex items-start gap-3 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={replaceChars}
+                            onChange={e => setReplaceChars(e.target.checked)}
+                            className="w-5 h-5 mt-0.5 rounded border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                          />
+                          <div className="flex-1">
+                            <span className="text-sm font-medium text-slate-200">Buchstaben ersetzen</span>
+                            <p className="text-xs text-slate-400 mt-1">
+                              {replaceChars
+                                ? 'Aktiviert: a→4, e→3, i→1, o→0, etc.'
+                                : 'Deaktiviert: Nur Groß-/Kleinschreibung'}
+                            </p>
+                          </div>
                         </label>
-                        <input
-                          type="range"
-                          min={1}
-                          max={5}
-                          value={crypticLevel}
-                          onChange={e => setCrypticLevel(+e.target.value)}
-                          className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
-                        />
-                        <div className="text-xs text-slate-400 mt-2 space-y-1">
-                          <p className="font-medium text-slate-300">
-                            {crypticLevel === 1 && '📝 Nutzt ca. 25% deiner Angaben (leicht merkbar)'}
-                            {crypticLevel === 2 && '📝 Nutzt ca. 40% deiner Angaben'}
-                            {crypticLevel === 3 && '📝 Nutzt ca. 60% deiner Angaben'}
-                            {crypticLevel === 4 && '📝 Nutzt ca. 80% deiner Angaben'}
-                            {crypticLevel === 5 && '📝 Nutzt 100% deiner Angaben für maximale Kryptizität'}
-                          </p>
-                          <p className="text-slate-500">
-                            Das System passt zusätzliche Ersetzungen, Sonderzeichen und Trennzeichen automatisch an.
-                          </p>
-                        </div>
                       </div>
-                    )}
 
-                    {settingsMode === 'manual' && (
-                      <div className="space-y-3">
-                        <div className="p-3 bg-slate-800/50 rounded-lg border border-slate-700">
-                          <label className="flex items-start gap-3 cursor-pointer">
+                      <div className="p-3 bg-slate-800/50 rounded-lg border border-slate-700">
+                        <label className="block text-sm font-medium text-slate-200 mb-2">
+                          Trennzeichen
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <label className="flex items-center gap-2 cursor-pointer">
                             <input
-                              type="checkbox"
-                              checked={replaceChars}
-                              onChange={e => setReplaceChars(e.target.checked)}
-                              className="w-5 h-5 mt-0.5 rounded border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                              type="radio"
+                              name="separator"
+                              checked={separator === 'none'}
+                              onChange={() => setSeparator('none')}
+                              className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
                             />
-                            <div className="flex-1">
-                              <span className="text-sm font-medium text-slate-200">Buchstaben ersetzen</span>
-                              <p className="text-xs text-slate-400 mt-1">
-                                {replaceChars
-                                  ? 'Aktiviert: a→4, e→3, i→1, o→0, etc.'
-                                  : 'Deaktiviert: Nur Groß-/Kleinschreibung'}
-                              </p>
-                            </div>
+                            <span className="text-sm text-slate-300">Keine</span>
                           </label>
-                        </div>
-
-                        <div className="p-3 bg-slate-800/50 rounded-lg border border-slate-700">
-                          <label className="block text-sm font-medium text-slate-200 mb-2">
-                            Trennzeichen
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="separator"
+                              checked={separator === 'dash'}
+                              onChange={() => setSeparator('dash')}
+                              className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                            />
+                            <span className="text-sm text-slate-300 font-mono">Bindestrich -</span>
                           </label>
-                          <div className="grid grid-cols-2 gap-2">
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="radio"
-                                name="separator"
-                                checked={separator === 'none'}
-                                onChange={() => setSeparator('none')}
-                                className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                              />
-                              <span className="text-sm text-slate-300">Keine</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="radio"
-                                name="separator"
-                                checked={separator === 'dash'}
-                                onChange={() => setSeparator('dash')}
-                                className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                              />
-                              <span className="text-sm text-slate-300 font-mono">Bindestrich -</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="radio"
-                                name="separator"
-                                checked={separator === 'underscore'}
-                                onChange={() => setSeparator('underscore')}
-                                className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                              />
-                              <span className="text-sm text-slate-300 font-mono">Unterstrich _</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="radio"
-                                name="separator"
-                                checked={separator === 'dot'}
-                                onChange={() => setSeparator('dot')}
-                                className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                              />
-                              <span className="text-sm text-slate-300 font-mono">Punkt .</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer col-span-2">
-                              <input
-                                type="radio"
-                                name="separator"
-                                checked={separator === 'random'}
-                                onChange={() => setSeparator('random')}
-                                className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                              />
-                              <span className="text-sm text-slate-300 font-mono">Zufällig (-, _, .)</span>
-                            </label>
-                          </div>
-                        </div>
-
-                        <div className="p-3 bg-slate-800/50 rounded-lg border border-slate-700">
-                          <label className="block text-sm font-medium text-slate-200 mb-2">
-                            Groß-/Kleinschreibung
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="separator"
+                              checked={separator === 'underscore'}
+                              onChange={() => setSeparator('underscore')}
+                              className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                            />
+                            <span className="text-sm text-slate-300 font-mono">Unterstrich _</span>
                           </label>
-                          <div className="grid grid-cols-2 gap-2">
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="radio"
-                                name="caseMode"
-                                checked={caseMode === 'original'}
-                                onChange={() => setCaseMode('original')}
-                                className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                              />
-                              <span className="text-sm text-slate-300">Original (Max)</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="radio"
-                                name="caseMode"
-                                checked={caseMode === 'alternate'}
-                                onChange={() => setCaseMode('alternate')}
-                                className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                              />
-                              <span className="text-sm text-slate-300">Abwechselnd (MaX)</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="radio"
-                                name="caseMode"
-                                checked={caseMode === 'upper'}
-                                onChange={() => setCaseMode('upper')}
-                                className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                              />
-                              <span className="text-sm text-slate-300">Groß (MAX)</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="radio"
-                                name="caseMode"
-                                checked={caseMode === 'lower'}
-                                onChange={() => setCaseMode('lower')}
-                                className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                              />
-                              <span className="text-sm text-slate-300">Klein (max)</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="radio"
-                                name="caseMode"
-                                checked={caseMode === 'capitalize'}
-                                onChange={() => setCaseMode('capitalize')}
-                                className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                              />
-                              <span className="text-sm text-slate-300">Kapitalisiert (Max)</span>
-                            </label>
-                          </div>
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="separator"
+                              checked={separator === 'dot'}
+                              onChange={() => setSeparator('dot')}
+                              className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                            />
+                            <span className="text-sm text-slate-300 font-mono">Punkt .</span>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer col-span-2">
+                            <input
+                              type="radio"
+                              name="separator"
+                              checked={separator === 'random'}
+                              onChange={() => setSeparator('random')}
+                              className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                            />
+                            <span className="text-sm text-slate-300 font-mono">Zufällig (-, _, .)</span>
+                          </label>
                         </div>
                       </div>
-                    )}
+
+                      <div className="p-3 bg-slate-800/50 rounded-lg border border-slate-700">
+                        <label className="block text-sm font-medium text-slate-200 mb-2">
+                          Groß-/Kleinschreibung
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="caseMode"
+                              checked={caseMode === 'original'}
+                              onChange={() => setCaseMode('original')}
+                              className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                            />
+                            <span className="text-sm text-slate-300">Original (Max)</span>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="caseMode"
+                              checked={caseMode === 'alternate'}
+                              onChange={() => setCaseMode('alternate')}
+                              className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                            />
+                            <span className="text-sm text-slate-300">Abwechselnd (MaX)</span>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="caseMode"
+                              checked={caseMode === 'upper'}
+                              onChange={() => setCaseMode('upper')}
+                              className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                            />
+                            <span className="text-sm text-slate-300">Groß (MAX)</span>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="caseMode"
+                              checked={caseMode === 'lower'}
+                              onChange={() => setCaseMode('lower')}
+                              className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                            />
+                            <span className="text-sm text-slate-300">Klein (max)</span>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="caseMode"
+                              checked={caseMode === 'capitalize'}
+                              onChange={() => setCaseMode('capitalize')}
+                              className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                            />
+                            <span className="text-sm text-slate-300">Kapitalisiert (Max)</span>
+                          </label>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -1510,76 +1388,72 @@ export default function GeneratorClient() {
                   </div>
                 )}
 
-                {(mode === 'random' || (mode === 'personal' && settingsMode === 'manual')) && (
-                  <>
-                    <Divider />
+                <Divider />
 
-                    {/* Character Types - nur im Random-Modus alle Optionen, im Personal-Modus nur Sonderzeichen */}
-                    {mode === 'random' ? (
-                      <div className="space-y-2">
-                        <label className="block text-sm font-medium text-slate-300 mb-2">
-                          Zeichentypen
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={includeUppercase}
-                            onChange={e => setIncludeUppercase(e.target.checked)}
-                            className="w-4 h-4 rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-700"
-                          />
-                          <span className="text-sm text-slate-300">Großbuchstaben (A-Z)</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={includeLowercase}
-                            onChange={e => setIncludeLowercase(e.target.checked)}
-                            className="w-4 h-4 rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-700"
-                          />
-                          <span className="text-sm text-slate-300">Kleinbuchstaben (a-z)</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={includeNumbers}
-                            onChange={e => setIncludeNumbers(e.target.checked)}
-                            className="w-4 h-4 rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-700"
-                          />
-                          <span className="text-sm text-slate-300">Zahlen (0-9)</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={includeSymbols}
-                            onChange={e => setIncludeSymbols(e.target.checked)}
-                            className="w-4 h-4 rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-700"
-                          />
-                          <span className="text-sm text-slate-300">Zufällige Sonderzeichen (!@#$%...)</span>
-                        </label>
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={includeSymbols}
-                            onChange={e => setIncludeSymbols(e.target.checked)}
-                            className="w-4 h-4 rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-700"
-                          />
-                          <span className="text-sm text-slate-300">Zufällige Sonderzeichen (!@#$%...)</span>
-                        </label>
-                      </div>
-                    )}
-
-                    <Input
-                      label="Zeichen ausschließen"
-                      value={excludeChars}
-                      onChange={e => setExcludeChars(e.target.value)}
-                      placeholder="z.B. O0lI1"
-                      helperText="Diese Zeichen werden nicht verwendet"
-                    />
-                  </>
+                {/* Character Types - nur im Random-Modus alle Optionen, im Personal-Modus nur Sonderzeichen */}
+                {mode === 'random' ? (
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-slate-300 mb-2">
+                      Zeichentypen
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={includeUppercase}
+                        onChange={e => setIncludeUppercase(e.target.checked)}
+                        className="w-4 h-4 rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-700"
+                      />
+                      <span className="text-sm text-slate-300">Großbuchstaben (A-Z)</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={includeLowercase}
+                        onChange={e => setIncludeLowercase(e.target.checked)}
+                        className="w-4 h-4 rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-700"
+                      />
+                      <span className="text-sm text-slate-300">Kleinbuchstaben (a-z)</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={includeNumbers}
+                        onChange={e => setIncludeNumbers(e.target.checked)}
+                        className="w-4 h-4 rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-700"
+                      />
+                      <span className="text-sm text-slate-300">Zahlen (0-9)</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={includeSymbols}
+                        onChange={e => setIncludeSymbols(e.target.checked)}
+                        className="w-4 h-4 rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-700"
+                      />
+                      <span className="text-sm text-slate-300">Zufällige Sonderzeichen (!@#$%...)</span>
+                    </label>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={includeSymbols}
+                        onChange={e => setIncludeSymbols(e.target.checked)}
+                        className="w-4 h-4 rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-700"
+                      />
+                      <span className="text-sm text-slate-300">Zufällige Sonderzeichen (!@#$%...)</span>
+                    </label>
+                  </div>
                 )}
+
+                <Input
+                  label="Zeichen ausschließen"
+                  value={excludeChars}
+                  onChange={e => setExcludeChars(e.target.value)}
+                  placeholder="z.B. O0lI1"
+                  helperText="Diese Zeichen werden nicht verwendet"
+                />
               </div>
             </Card>
           </div>
@@ -1699,21 +1573,14 @@ export default function GeneratorClient() {
                 <div>
                   <p className="font-medium mb-1">So merkst du dir dein Passwort</p>
                   <div className="text-sm space-y-2">
-                    {settingsMode === 'automatic' ? (
-                      <p>
-                        <strong>Kryptizität Level {crypticLevel}:</strong>
-                        {crypticLevel === 1 && ' Nutzt nur erste Buchstaben (z.B. "Max" → "M")'}
-                        {crypticLevel === 2 && ' Nutzt erste 2 Zeichen (z.B. "Max" → "Ma")'}
-                        {crypticLevel === 3 && ' Nutzt erste Hälfte (z.B. "Mustermann" → "Must")'}
-                        {crypticLevel === 4 && ' Nutzt 3/4 der Angaben'}
-                        {crypticLevel === 5 && ' Nutzt vollständige Angaben'}
-                      </p>
-                    ) : (
-                      <p>
-                        <strong>Manueller Modus:</strong> Du steuerst Ersetzungen, Trennzeichen und Groß-/Kleinschreibung
-                        selbst. Alle Angaben werden vollständig genutzt.
-                      </p>
-                    )}
+                    <p>
+                      <strong>Kryptizität Level {crypticLevel}:</strong>
+                      {crypticLevel === 1 && ' Nutzt nur erste Buchstaben (z.B. "Max" → "M")'}
+                      {crypticLevel === 2 && ' Nutzt erste 2 Zeichen (z.B. "Max" → "Ma")'}
+                      {crypticLevel === 3 && ' Nutzt erste Hälfte (z.B. "Mustermann" → "Must")'}
+                      {crypticLevel === 4 && ' Nutzt 3/4 der Angaben'}
+                      {crypticLevel === 5 && ' Nutzt vollständige Angaben'}
+                    </p>
                     <p>
                       <strong>Zeichen ersetzen:</strong>
                       {replaceChars

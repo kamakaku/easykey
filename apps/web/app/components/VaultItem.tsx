@@ -8,6 +8,7 @@ interface VaultItemProps {
     password: string;
     url?: string;
     notes?: string;
+    category?: string; // ID der Kategorie
     createdAt: string;
     updatedAt?: string;
   };
@@ -29,9 +30,32 @@ export default function VaultItem({ item, onClick }: VaultItemProps) {
 
       {/* Content */}
       <div className="flex-1 min-w-0">
-        <h3 className="text-base font-semibold text-slate-100 truncate group-hover:text-white transition-colors">
-          {item.title}
-        </h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-base font-semibold text-slate-100 truncate group-hover:text-white transition-colors">
+            {item.title}
+          </h3>
+          {item.category && (
+            <span className={`px-2 py-0.5 rounded text-xs ${
+              item.category === 'login' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
+              item.category === 'email' ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' :
+              item.category === 'bank' ? 'bg-green-500/10 text-green-400 border border-green-500/20' :
+              item.category === 'card' ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20' :
+              item.category === 'social' ? 'bg-pink-500/10 text-pink-400 border border-pink-500/20' :
+              item.category === 'work' ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' :
+              // For custom categories, use a generic color
+              'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'
+            }`}>
+              {item.category === 'login' ? 'Login' :
+               item.category === 'email' ? 'E-Mail' :
+               item.category === 'bank' ? 'Bank' :
+               item.category === 'card' ? 'Kreditkarte' :
+               item.category === 'social' ? 'Social Media' :
+               item.category === 'work' ? 'Arbeit' :
+               // For custom categories, display the ID as label since we don't have the label here
+               item.category.charAt(0).toUpperCase() + item.category.slice(1)}
+            </span>
+          )}
+        </div>
         {item.username && (
           <p className="text-sm text-slate-400 truncate">{item.username}</p>
         )}
