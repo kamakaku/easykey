@@ -13,6 +13,17 @@ interface CustomField {
   value: string;
 }
 
+type VaultItemSummary = {
+  id: number;
+  title: string;
+  username?: string;
+  url?: string;
+  notes?: string;
+  category?: string;
+  expiresAt?: string;
+  rotationIntervalDays?: number;
+};
+
 // Verfügbare Kategorien mit Farben (gleich wie im Vault)
 const CATEGORIES = [
   { id: 'login', label: 'Login', color: 'bg-blue-500/10 text-blue-400 border-blue-500/20' },
@@ -67,8 +78,16 @@ export default function GeneratorClient() {
   const [vaultImportUrl, setVaultImportUrl] = useState('');
   const [vaultImportNotes, setVaultImportNotes] = useState('');
   const [vaultImportCategory, setVaultImportCategory] = useState('login');
+  const [vaultImportExpiresAt, setVaultImportExpiresAt] = useState('');
+  const [vaultImportRotationInterval, setVaultImportRotationInterval] = useState('');
   const [vaultImportStatus, setVaultImportStatus] = useState<{message: string, type: 'success' | 'error' | 'info' | 'warning'} | null>(null);
   const [showGeneratedPassword, setShowGeneratedPassword] = useState(false);
+  const [availableVaultItems, setAvailableVaultItems] = useState<VaultItemSummary[]>([]);
+  const [isLoadingVaultItems, setIsLoadingVaultItems] = useState(false);
+  const [vaultItemsError, setVaultItemsError] = useState<string | null>(null);
+  const [selectedVaultItemId, setSelectedVaultItemId] = useState<number | null>(null);
+  const [vaultImportDefaultTitle, setVaultImportDefaultTitle] = useState('');
+  const [isVaultImportFormActive, setIsVaultImportFormActive] = useState(false);
 
   // Helper functions for encoding/decoding
   function encodeToBase64(str: string) {
@@ -84,6 +103,13 @@ export default function GeneratorClient() {
     return btoa(binary);
   }
 
+  function isoToDateInput(value?: string) {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toISOString().split('T')[0];
+  }
+
   function decodeFromBase64(b64: string) {
     try {
       if (typeof window === 'undefined') {
@@ -95,6 +121,25 @@ export default function GeneratorClient() {
     } catch {
       return '';
     }
+  }
+
+  function getRandomInt(max: number) {
+    if (max <= 0) return 0;
+    if (typeof window !== 'undefined' && window.crypto?.getRandomValues) {
+      const array = new Uint32Array(1);
+      window.crypto.getRandomValues(array);
+      return array[0] % max;
+    }
+    return Math.floor(Math.random() * max);
+  }
+
+  function shuffleArrayRandom<T>(array: T[]): T[] {
+    const arr = [...array];
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = getRandomInt(i + 1);
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
   }
 
   // Lade gespeicherte Daten vom Server beim Start
@@ -179,6 +224,75 @@ export default function GeneratorClient() {
     if (data.settingsMode === 'automatic' || data.settingsMode === 'manual') {
       setSettingsMode(data.settingsMode);
     }
+  }
+
+  function normalizeRotationInterval(value: string) {
+    const parsed = Number(value);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      return undefined;
+    }
+    return Math.round(parsed);
+  }
+
+  function computeNextExpiration(explicitDate?: string, intervalDays?: number, referenceIso?: string) {
+    if (explicitDate) {
+      const explicit = new Date(explicitDate);
+      if (!Number.isNaN(explicit.getTime())) {
+        return explicit.toISOString();
+      }
+    }
+    if (!intervalDays) {
+      return undefined;
+    }
+    const reference = referenceIso ? new Date(referenceIso) : new Date();
+    if (Number.isNaN(reference.getTime())) {
+      return undefined;
+    }
+    const next = new Date(reference.getTime() + intervalDays * 24 * 60 * 60 * 1000);
+    return next.toISOString();
+  }
+
+  function populateVaultFormFromItem(item: VaultItemSummary | null, fallbackTitle = '') {
+    setIsVaultImportFormActive(true);
+    if (item) {
+      setSelectedVaultItemId(item.id);
+      setVaultImportTitle(item.title);
+      setVaultImportUsername(item.username || '');
+      setVaultImportUrl(item.url || '');
+      setVaultImportNotes(item.notes || '');
+      setVaultImportCategory(item.category || 'login');
+      setVaultImportExpiresAt(isoToDateInput(item.expiresAt));
+      setVaultImportRotationInterval(
+        typeof item.rotationIntervalDays === 'number' ? String(item.rotationIntervalDays) : ''
+      );
+    } else {
+      setSelectedVaultItemId(null);
+      setVaultImportTitle(fallbackTitle);
+      setVaultImportUsername('');
+      setVaultImportUrl('');
+      setVaultImportNotes('');
+      setVaultImportCategory('login');
+      setVaultImportExpiresAt('');
+      setVaultImportRotationInterval('');
+    }
+  }
+
+  function handleVaultImportTitleChange(value: string) {
+    setVaultImportTitle(value);
+    const match = availableVaultItems.find(item => item.title === value);
+    if (match) {
+      populateVaultFormFromItem(match);
+    } else {
+      setSelectedVaultItemId(null);
+    }
+  }
+
+  function handleSelectVaultItem(item: VaultItemSummary) {
+    populateVaultFormFromItem(item);
+  }
+
+  function handleCreateNewVaultEntry() {
+    populateVaultFormFromItem(null, vaultImportDefaultTitle || '');
   }
 
   // Speichere Daten automatisch bei Änderungen
@@ -269,6 +383,12 @@ export default function GeneratorClient() {
     settingsMode,
     encryptionKey,
   ]);
+
+  useEffect(() => {
+    if (showVaultImportModal && encryptionKey) {
+      void loadVaultItems();
+    }
+  }, [showVaultImportModal, encryptionKey]);
 
   useEffect(() => {
     if (mode !== 'personal') return;
@@ -441,7 +561,7 @@ export default function GeneratorClient() {
       // Mit festem Trennzeichen - entferne andere Sonderzeichen, aber nicht das gewählte
       const separatorChar = getSeparatorChar();
       if (separatorChar === '.') {
-        basePassword = basePassword.replace(/[\s,\-\/]/g, ''); // Punkt bleibt
+        basePassword = basePassword.replace(/[\s,\/\-]/g, ''); // Punkt bleibt
       } else if (separatorChar === '-') {
         basePassword = basePassword.replace(/[\s,.\/]/g, ''); // Bindestrich bleibt
       } else if (separatorChar === '_') {
@@ -452,21 +572,25 @@ export default function GeneratorClient() {
     // Transformiere basierend auf Kryptizität und Variante
     let transformedPassword = transformPassword(basePassword, crypticLevel, generationCounter);
 
-    // Passe auf gewünschte Länge an
-    if (transformedPassword.length < length) {
-      // Wiederhole oder fülle auf
-      while (transformedPassword.length < length) {
-        transformedPassword += transformPassword(basePassword, crypticLevel, generationCounter + transformedPassword.length);
+    // Passe auf gewünschte Länge an - ABER NUR IM ZEICHENMODUS, nicht im Blockmodus
+    if (generationStyle === 'characters') {
+      // Passe auf gewünschte Länge an
+      if (transformedPassword.length < length) {
+        // Wiederhole oder fülle auf
+        while (transformedPassword.length < length) {
+          transformedPassword += transformPassword(basePassword, crypticLevel, generationCounter + transformedPassword.length);
+        }
       }
+      transformedPassword = transformedPassword.substring(0, length);
     }
-    transformedPassword = transformedPassword.substring(0, length);
+    // Im Blockmodus: Keine Längenanpassung - die Passwortlänge ergibt sich aus den Blöcken
 
     // Im Personal-Modus: Keine Zeichen-Typ-Filterung, da Daten aus persönlichen Infos kommen
     // Nur ausgeschlossene Zeichen entfernen und optional Sonderzeichen hinzufügen
 
     // Entferne ausgeschlossene Zeichen
     if (excludeChars) {
-      transformedPassword = removeExcludedChars(transformedPassword);
+      transformedPassword = removeExcludedChars(transformedPassword, generationStyle);
     }
 
     // Füge zufällige Sonderzeichen ein, wenn aktiviert (NACH dem Filtern)
@@ -494,7 +618,7 @@ export default function GeneratorClient() {
     return [];
   }
 
-  function ensureAllCharTypes(password: string, seed: number): string {
+  function ensureAllCharTypes(password: string, seed: number, currentGenerationStyle: 'characters' | 'blocks' = generationStyle): string {
     let result = password;
     const allowedSeparators = getAllowedSeparators();
 
@@ -538,11 +662,11 @@ export default function GeneratorClient() {
       insertions++;
     }
 
-    // Kürze auf gewünschte Länge, falls zu lang geworden
-    return result.substring(0, length);
+    // Kürze auf gewünschte Länge, falls zu lang geworden - ABER NUR IM ZEICHENMODUS
+    return currentGenerationStyle === 'characters' ? result.substring(0, length) : result;
   }
 
-  function filterByCharTypes(password: string): string {
+  function filterByCharTypes(password: string, currentGenerationStyle: 'characters' | 'blocks' = generationStyle): string {
     const allowedSeparators = getAllowedSeparators();
 
     // Entferne Zeichen basierend auf deaktivierten Zeichentypen
@@ -566,12 +690,12 @@ export default function GeneratorClient() {
       return true;
     }).join('');
 
-    // Falls das Passwort zu kurz wurde, fülle mit erlaubten Zeichen auf
-    if (result.length < length) {
+    // Falls das Passwort zu kurz wurde, fülle mit erlaubten Zeichen auf - ABER NUR IM ZEICHENMODUS
+    if (currentGenerationStyle === 'characters' && result.length < length) {
       const allowedChars = buildCharset();
       if (allowedChars.length === 0) {
         // Fallback: Wenn keine Zeichen erlaubt sind, verwende Kleinbuchstaben
-        return 'abcdefghijklmnopqrstuvwxyz'.substring(0, length);
+        return currentGenerationStyle === 'characters' ? 'abcdefghijklmnopqrstuvwxyz'.substring(0, length) : 'abcdefghijklmnopqrstuvwxyz';
       }
 
       while (result.length < length) {
@@ -581,17 +705,18 @@ export default function GeneratorClient() {
       }
     }
 
-    return result.substring(0, length);
+    // Kürze nur im Zeichenmodus auf die gewünschte Länge
+    return currentGenerationStyle === 'characters' ? result.substring(0, length) : result;
   }
 
-  function removeExcludedChars(password: string): string {
+  function removeExcludedChars(password: string, currentGenerationStyle: 'characters' | 'blocks' = generationStyle): string {
     if (!excludeChars) return password;
 
     // Entferne alle ausgeschlossenen Zeichen
     let result = password.split('').filter(char => !excludeChars.includes(char)).join('');
 
-    // Falls das Passwort zu kurz wurde, fülle mit erlaubten Zeichen auf
-    if (result.length < length) {
+    // Falls das Passwort zu kurz wurde, fülle mit erlaubten Zeichen auf - ABER NUR IM ZEICHENMODUS
+    if (currentGenerationStyle === 'characters' && result.length < length) {
       const allowedChars = buildCharset();
       while (result.length < length) {
         // Deterministisch basierend auf aktueller Länge
@@ -600,7 +725,8 @@ export default function GeneratorClient() {
       }
     }
 
-    return result.substring(0, length);
+    // Kürze nur im Zeichenmodus auf die gewünschte Länge
+    return currentGenerationStyle === 'characters' ? result.substring(0, length) : result;
   }
 
   function insertRandomSymbols(password: string, seed: number): string {
@@ -771,7 +897,7 @@ export default function GeneratorClient() {
     // Stelle sicher, dass alle aktivierten Zeichentypen vorhanden sind
     // Verwende einen Seed basierend auf dem ersten Zeichen für Determinismus
     const seed = pw.charCodeAt(0) + pw.length;
-    pw = ensureAllCharTypes(pw, seed);
+    pw = ensureAllCharTypes(pw, seed, generationStyle);
 
     setPassword(pw);
     setCopied(false);
@@ -811,6 +937,82 @@ export default function GeneratorClient() {
     return result;
   }
 
+  async function loadVaultItems() {
+    if (!encryptionKey) {
+      setAvailableVaultItems([]);
+      return;
+    }
+
+    setIsLoadingVaultItems(true);
+    setVaultItemsError(null);
+
+    try {
+      const res = await fetch('/backend/api/v1/vault', {
+        cache: 'no-store',
+        credentials: 'include',
+      });
+
+      if (res.status === 404) {
+        setAvailableVaultItems([]);
+        return;
+      }
+
+      if (!res.ok) {
+        throw new Error(`Fehler beim Laden (${res.status})`);
+      }
+
+      const vaultRes = await res.json();
+      const blobDecoded = atob(vaultRes.blob);
+      let parsed: any = {};
+
+      if (blobDecoded.includes(':')) {
+        const decryptedJson = await cryptoDecrypt(blobDecoded, encryptionKey);
+        parsed = JSON.parse(decryptedJson || '{}');
+      } else {
+        const binary = atob(vaultRes.blob);
+        const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
+        const decoder = new TextDecoder();
+        const json = decoder.decode(bytes);
+        parsed = JSON.parse(json || '{}');
+      }
+
+      if (Array.isArray(parsed.items)) {
+        const summaries: VaultItemSummary[] = parsed.items
+          .map(
+            ({
+              id,
+              title,
+              username,
+              url,
+              notes,
+              category,
+              expiresAt,
+              rotationIntervalDays,
+            }: any) => ({
+              id,
+              title,
+              username,
+              url,
+              notes,
+              category,
+              expiresAt,
+              rotationIntervalDays,
+            }),
+          )
+          .sort((a, b) => a.title.localeCompare(b.title, 'de'));
+        setAvailableVaultItems(summaries);
+      } else {
+        setAvailableVaultItems([]);
+      }
+    } catch (error) {
+      console.error('Fehler beim Laden der Vault-Items:', error);
+      setVaultItemsError('Vault-Einträge konnten nicht geladen werden.');
+      setAvailableVaultItems([]);
+    } finally {
+      setIsLoadingVaultItems(false);
+    }
+  }
+
   async function savePasswordToVault() {
     if (!password || !vaultImportTitle) {
       setVaultImportStatus({ message: 'Titel ist erforderlich', type: 'error' });
@@ -848,23 +1050,93 @@ export default function GeneratorClient() {
         throw new Error(`Fehler beim Laden des Vaults: ${vaultRes.status}`);
       }
 
-      // Erstelle neuen Eintrag
-      const newEntry = {
-        id: Date.now(),
-        title: vaultImportTitle,
-        username: vaultImportUsername || undefined,
-        password: password, // Das generierte Passwort
-        url: vaultImportUrl || undefined,
-        notes: vaultImportNotes || undefined,
-        category: vaultImportCategory,
-        createdAt: new Date().toISOString(),
-      };
+      const nowIso = new Date().toISOString();
+      const intervalDays = normalizeRotationInterval(vaultImportRotationInterval);
+      const explicitExpiresIso = (() => {
+        if (!vaultImportExpiresAt) return undefined;
+        const date = new Date(vaultImportExpiresAt);
+        return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+      })();
+      const effectiveExpiresAt = computeNextExpiration(explicitExpiresIso, intervalDays, nowIso);
+      const historyEntry = { value: password, changedAt: nowIso };
 
-      // Füge neuen Eintrag zu den bestehenden hinzu
+      const items = Array.isArray(currentVaultData.items) ? [...currentVaultData.items] : [];
+      const existingIndex = items.findIndex(item => item.title === vaultImportTitle);
+      let successMessage = 'Passwort erfolgreich zum Vault hinzugefügt!';
+
+      if (existingIndex >= 0) {
+        const existing = items[existingIndex];
+        const history = existing.passwordHistory ? [...existing.passwordHistory] : [];
+        if (history.length === 0) {
+          history.push({
+            value: existing.password,
+            changedAt: existing.updatedAt || existing.createdAt || nowIso,
+          });
+        }
+        if (existing.password !== password) {
+          history.push(historyEntry);
+        }
+        const nextRotationInterval = intervalDays ?? existing.rotationIntervalDays;
+        const nextExpiresAt = effectiveExpiresAt ?? existing.expiresAt;
+        items[existingIndex] = {
+          ...existing,
+          title: vaultImportTitle,
+          username: vaultImportUsername || existing.username,
+          password,
+          url: vaultImportUrl || existing.url,
+          notes: vaultImportNotes || existing.notes,
+          category: vaultImportCategory || existing.category,
+          expiresAt: nextExpiresAt,
+          rotationIntervalDays: nextRotationInterval,
+          passwordHistory: history,
+          updatedAt: nowIso,
+        };
+        successMessage = 'Passwort im Vault aktualisiert!';
+      } else {
+        items.push({
+          id: Date.now(),
+          title: vaultImportTitle,
+          username: vaultImportUsername || undefined,
+          password,
+          url: vaultImportUrl || undefined,
+          notes: vaultImportNotes || undefined,
+          category: vaultImportCategory,
+          createdAt: nowIso,
+          expiresAt: effectiveExpiresAt,
+          rotationIntervalDays: intervalDays,
+          passwordHistory: [historyEntry],
+        });
+      }
+
       const updatedVaultData = {
         ...currentVaultData,
-        items: [...(currentVaultData.items || []), newEntry],
+        items,
       };
+      setAvailableVaultItems(
+        items
+          .map(
+            ({
+              id,
+              title,
+              username,
+              url,
+              notes,
+              category,
+              expiresAt,
+              rotationIntervalDays,
+            }: any) => ({
+              id,
+              title,
+              username,
+              url,
+              notes,
+              category,
+              expiresAt,
+              rotationIntervalDays,
+            }),
+          )
+          .sort((a, b) => a.title.localeCompare(b.title, 'de')),
+      );
 
       // Verschlüssele und speichere die aktualisierten Daten
       const vaultJson = JSON.stringify(updatedVaultData);
@@ -885,7 +1157,7 @@ export default function GeneratorClient() {
         throw new Error(`Fehler beim Speichern: ${saveRes.status}`);
       }
 
-      setVaultImportStatus({ message: 'Passwort erfolgreich zum Vault hinzugefügt!', type: 'success' });
+      setVaultImportStatus({ message: successMessage, type: 'success' });
       
       // Setze das Formular nach erfolgreichem Speichern
       setTimeout(() => {
@@ -894,9 +1166,14 @@ export default function GeneratorClient() {
         setVaultImportUsername('');
         setVaultImportUrl('');
         setVaultImportNotes('');
-        setVaultImportCategory('login');
-        setVaultImportStatus(null);
-      }, 1500);
+      setVaultImportCategory('login');
+      setVaultImportExpiresAt('');
+      setVaultImportRotationInterval('');
+      setVaultImportStatus(null);
+      setSelectedVaultItemId(null);
+      setVaultImportDefaultTitle('');
+      setIsVaultImportFormActive(false);
+    }, 1500);
     } catch (error) {
       console.error('Fehler beim Speichern im Vault:', error);
       setVaultImportStatus({ 
@@ -904,6 +1181,13 @@ export default function GeneratorClient() {
         type: 'error' 
       });
     }
+  }
+
+  function closeVaultImportModal() {
+    setShowVaultImportModal(false);
+    setIsVaultImportFormActive(false);
+    setSelectedVaultItemId(null);
+    setVaultImportStatus(null);
   }
 
   function openVaultImportModal() {
@@ -915,19 +1199,21 @@ export default function GeneratorClient() {
     // Setze den Titel auf den aktuellen Modus als Standardwert
     const defaultTitle = mode === 'personal' ? 'Persönliches Passwort' : 'Zufälliges Passwort';
     
-    setVaultImportTitle(defaultTitle);
+    setVaultImportDefaultTitle(defaultTitle);
+    setIsVaultImportFormActive(false);
+    setSelectedVaultItemId(null);
+    setVaultImportTitle('');
     setVaultImportUsername('');
     setVaultImportUrl('');
     setVaultImportNotes('');
     setVaultImportCategory('login');
+    setVaultImportExpiresAt('');
+    setVaultImportRotationInterval('');
     setVaultImportStatus(null);
     setShowVaultImportModal(true);
+    void loadVaultItems();
   }
 
-  // Funktion zur Passwort-Generierung aus Blöcken (für Personal-Modus)
-  // Funktion zur Passwort-Generierung aus Blöcken (für Personal-Modus)
-  // Funktion zur Passwort-Generierung aus Blöcken (für Personal-Modus)
-  // Funktion zur Passwort-Generierung aus Blöcken (für Personal-Modus)
   // Funktion zur Passwort-Generierung aus Blöcken (für Personal-Modus)
   function generatePasswordFromBlocks(): string {
     // Sammle nur ausgefüllte persönliche Daten
@@ -959,12 +1245,19 @@ export default function GeneratorClient() {
       return "";
     }
 
-    // Verwende eine deterministische Methode, um ausreichend Daten für die Anzahl der Blöcke zu erzeugen
+    // Mische die Daten zufällig, damit die Blockreihenfolge pro Variante variiert
+    let shuffledPool = shuffleArrayRandom(processedData);
+    let poolIndex = 0;
+
     const blocks: string[] = [];
     for (let i = 0; i < numBlocks; i++) {
-      // Verwende generationCounter als zusätzlichen Seed für Variationen
-      const seed = (generationCounter + i) % processedData.length;
-      let baseText = processedData[seed];
+      if (poolIndex >= shuffledPool.length) {
+        shuffledPool = shuffleArrayRandom(processedData);
+        poolIndex = 0;
+      }
+
+      let baseText = shuffledPool[poolIndex];
+      poolIndex++;
 
       // Extrahiere Text basierend auf Kryptizität
       let block = extractByLevel(baseText, crypticLevel);
@@ -985,8 +1278,7 @@ export default function GeneratorClient() {
       for (let i = 0; i < blocks.length; i++) {
         basePassword += blocks[i];
         if (i < blocks.length - 1) {
-          // Verwende generationCounter als Seed für deterministische "Zufälligkeit"
-          const randomIndex = Math.abs((generationCounter + i) * 9301 + 49297) % randomChars.length;
+          const randomIndex = getRandomInt(randomChars.length);
           basePassword += randomChars[randomIndex];
         }
       }
@@ -1000,19 +1292,19 @@ export default function GeneratorClient() {
     // Entferne Leerzeichen und Sonderzeichen (außer das/die gewählte(n) Trennzeichen)
     if (separator === "random") {
       // Bei zufälligen Trennzeichen: Alle drei Trennzeichen behalten
-      basePassword = basePassword.replace(/[\\s,\\/]/g, "");
+      basePassword = basePassword.replace(/[\s,\/]/g, "");
     } else if (separator === "none") {
       // Keine Trennzeichen - entferne alle Sonderzeichen
-      basePassword = basePassword.replace(/[\\s,.\\-\\/]/g, "");
+      basePassword = basePassword.replace(/[\s,.\-\/]/g, "");
     } else {
       // Mit festem Trennzeichen - entferne andere Sonderzeichen, aber nicht das gewählte
       const separatorChar = getSeparatorChar();
       if (separatorChar === ".") {
-        basePassword = basePassword.replace(/[\\s,\\-\\/]/g, ""); // Punkt bleibt
+        basePassword = basePassword.replace(/[\s,\/\-]/g, ""); // Punkt bleibt
       } else if (separatorChar === "-") {
-        basePassword = basePassword.replace(/[\\s,.\\/]/g, ""); // Bindestrich bleibt
+        basePassword = basePassword.replace(/[\s,.\/]/g, ""); // Bindestrich bleibt
       } else if (separatorChar === "_") {
-        basePassword = basePassword.replace(/[\\s,.\\-\\/]/g, ""); // Unterstrich bleibt
+        basePassword = basePassword.replace(/[\s,.\-\/]/g, ""); // Unterstrich bleibt
       }
     }
 
@@ -1021,7 +1313,7 @@ export default function GeneratorClient() {
 
     // Entferne ausgeschlossene Zeichen
     if (excludeChars) {
-      transformedPassword = removeExcludedChars(transformedPassword);
+      transformedPassword = removeExcludedChars(transformedPassword, generationStyle);
     }
 
     // Füge zufällige Sonderzeichen ein, wenn aktiviert (NACH dem Filtern)
@@ -1046,8 +1338,19 @@ export default function GeneratorClient() {
     const hasDigit = /[0-9]/.test(password);
     const hasSymbol = /[^A-Za-z0-9]/.test(password);
     const charVariety = [hasUpper, hasLower, hasDigit, hasSymbol].filter(Boolean).length;
-    const lengthScore = length >= 16 ? 2 : length >= 12 ? 1 : 0;
-    const score = charVariety + lengthScore;
+    
+    // Unterschiedliche Bewertung je nach Modus
+    let score = 0;
+    if (generationStyle === 'blocks') {
+      // Im Blockmodus: Bewertung basierend auf Anzahl der Blöcke
+      const blockScore = Math.min(Math.floor(numBlocks / 2), 3); // Max 3 für 6 Blöcke
+      const varietyScore = Math.min(charVariety, 2); // Max 2 für alle Zeichentypen
+      score = blockScore + varietyScore;
+    } else {
+      // Im Zeichenmodus: Bewertung wie zuvor basierend auf Länge
+      const lengthScore = length >= 16 ? 2 : length >= 12 ? 1 : 0;
+      score = charVariety + lengthScore;
+    }
 
     if (score >= 5) return { text: 'Sehr sicher', variant: 'success' as const, color: 'bg-green-500', width: 100 };
     if (score >= 4) return { text: 'Sicher', variant: 'info' as const, color: 'bg-blue-500', width: 75 };
@@ -1220,7 +1523,9 @@ export default function GeneratorClient() {
 
             {/* Settings */}
             <Card>
-              <h2 className="text-lg font-semibold text-slate-100 mb-4">Einstellungen</h2>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold text-slate-100">Einstellungen</h2>
+              </div>
               <div className="space-y-4">
                 {mode === 'personal' && (
                   <div className="space-y-4">
@@ -1286,206 +1591,6 @@ export default function GeneratorClient() {
                         </p>
                       </div>
                     )}
-
-                    <div className="space-y-2">
-                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                        <span className="text-sm font-medium text-slate-300">Kryptizität-Steuerung</span>
-                        <div className="grid grid-cols-2 gap-2">
-                          <button
-                            onClick={() => setSettingsMode('automatic')}
-                            className={`px-3 py-2 rounded-lg border ${
-                              settingsMode === 'automatic'
-                                ? 'border-purple-500 bg-purple-500/20 text-purple-100'
-                                : 'border-slate-700 text-slate-300 hover:border-slate-500 hover:text-slate-100'
-                            } transition-all`}
-                          >
-                            Automatisch
-                          </button>
-                          <button
-                            onClick={() => setSettingsMode('manual')}
-                            className={`px-3 py-2 rounded-lg border ${
-                              settingsMode === 'manual'
-                                ? 'border-purple-500 bg-purple-500/20 text-purple-100'
-                                : 'border-slate-700 text-slate-300 hover:border-slate-500 hover:text-slate-100'
-                            } transition-all`}
-                          >
-                            Manuell
-                          </button>
-                        </div>
-                      </div>
-                      <p className="text-xs text-slate-500">
-                        {settingsMode === 'automatic'
-                          ? 'System setzt Ersetzungen, Zeichenmix und Trennzeichen anhand des Kryptizitäts-Levels.'
-                          : 'Du steuerst Ersetzungen, Trennzeichen und Groß-/Kleinschreibung komplett selbst.'}
-                      </p>
-                    </div>
-
-                    {settingsMode === 'automatic' && (
-                      <div>
-                        <label className="block text-sm font-medium text-slate-300 mb-2">
-                          Kryptizität: Level {crypticLevel}
-                        </label>
-                        <input
-                          type="range"
-                          min={1}
-                          max={5}
-                          value={crypticLevel}
-                          onChange={e => setCrypticLevel(+e.target.value)}
-                          className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
-                        />
-                        <div className="text-xs text-slate-400 mt-2 space-y-1">
-                          <p className="font-medium text-slate-300">
-                            {crypticLevel === 1 && '📝 Nutzt ca. 25% deiner Angaben (leicht merkbar)'}
-                            {crypticLevel === 2 && '📝 Nutzt ca. 40% deiner Angaben'}
-                            {crypticLevel === 3 && '📝 Nutzt ca. 60% deiner Angaben'}
-                            {crypticLevel === 4 && '📝 Nutzt ca. 80% deiner Angaben'}
-                            {crypticLevel === 5 && '📝 Nutzt 100% deiner Angaben für maximale Kryptizität'}
-                          </p>
-                          <p className="text-slate-500">
-                            Das System passt zusätzliche Ersetzungen, Sonderzeichen und Trennzeichen automatisch an.
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                    {settingsMode === 'manual' && (
-                      <div className="space-y-3">
-                        <div className="p-3 bg-slate-800/50 rounded-lg border border-slate-700">
-                          <label className="flex items-start gap-3 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={replaceChars}
-                              onChange={e => setReplaceChars(e.target.checked)}
-                              className="w-5 h-5 mt-0.5 rounded border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                            />
-                            <div className="flex-1">
-                              <span className="text-sm font-medium text-slate-200">Buchstaben ersetzen</span>
-                              <p className="text-xs text-slate-400 mt-1">
-                                {replaceChars
-                                  ? 'Aktiviert: a→4, e→3, i→1, o→0, etc.'
-                                  : 'Deaktiviert: Nur Groß-/Kleinschreibung'}
-                              </p>
-                            </div>
-                          </label>
-                        </div>
-
-                        <div className="p-3 bg-slate-800/50 rounded-lg border border-slate-700">
-                          <label className="block text-sm font-medium text-slate-200 mb-2">
-                            Trennzeichen
-                          </label>
-                          <div className="grid grid-cols-2 gap-2">
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="radio"
-                                name="separator"
-                                checked={separator === 'none'}
-                                onChange={() => setSeparator('none')}
-                                className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                              />
-                              <span className="text-sm text-slate-300">Keine</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="radio"
-                                name="separator"
-                                checked={separator === 'dash'}
-                                onChange={() => setSeparator('dash')}
-                                className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                              />
-                              <span className="text-sm text-slate-300 font-mono">Bindestrich -</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="radio"
-                                name="separator"
-                                checked={separator === 'underscore'}
-                                onChange={() => setSeparator('underscore')}
-                                className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                              />
-                              <span className="text-sm text-slate-300 font-mono">Unterstrich _</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="radio"
-                                name="separator"
-                                checked={separator === 'dot'}
-                                onChange={() => setSeparator('dot')}
-                                className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                              />
-                              <span className="text-sm text-slate-300 font-mono">Punkt .</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer col-span-2">
-                              <input
-                                type="radio"
-                                name="separator"
-                                checked={separator === 'random'}
-                                onChange={() => setSeparator('random')}
-                                className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                              />
-                              <span className="text-sm text-slate-300 font-mono">Zufällig (-, _, .)</span>
-                            </label>
-                          </div>
-                        </div>
-
-                        <div className="p-3 bg-slate-800/50 rounded-lg border border-slate-700">
-                          <label className="block text-sm font-medium text-slate-200 mb-2">
-                            Groß-/Kleinschreibung
-                          </label>
-                          <div className="grid grid-cols-2 gap-2">
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="radio"
-                                name="caseMode"
-                                checked={caseMode === 'original'}
-                                onChange={() => setCaseMode('original')}
-                                className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                              />
-                              <span className="text-sm text-slate-300">Original (Max)</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="radio"
-                                name="caseMode"
-                                checked={caseMode === 'alternate'}
-                                onChange={() => setCaseMode('alternate')}
-                                className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                              />
-                              <span className="text-sm text-slate-300">Abwechselnd (MaX)</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="radio"
-                                name="caseMode"
-                                checked={caseMode === 'upper'}
-                                onChange={() => setCaseMode('upper')}
-                                className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                              />
-                              <span className="text-sm text-slate-300">Groß (MAX)</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="radio"
-                                name="caseMode"
-                                checked={caseMode === 'lower'}
-                                onChange={() => setCaseMode('lower')}
-                                className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                              />
-                              <span className="text-sm text-slate-300">Klein (max)</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input
-                                type="radio"
-                                name="caseMode"
-                                checked={caseMode === 'capitalize'}
-                                onChange={() => setCaseMode('capitalize')}
-                                className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                              />
-                              <span className="text-sm text-slate-300">Kapitalisiert (Max)</span>
-                            </label>
-                          </div>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 )}
 
@@ -1510,78 +1615,284 @@ export default function GeneratorClient() {
                   </div>
                 )}
 
-                {(mode === 'random' || (mode === 'personal' && settingsMode === 'manual')) && (
+                {mode === 'random' && (
                   <>
                     <Divider />
 
-                    {/* Character Types - nur im Random-Modus alle Optionen, im Personal-Modus nur Sonderzeichen */}
-                    {mode === 'random' ? (
-                      <div className="space-y-2">
-                        <label className="block text-sm font-medium text-slate-300 mb-2">
-                          Zeichentypen
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={includeUppercase}
-                            onChange={e => setIncludeUppercase(e.target.checked)}
-                            className="w-4 h-4 rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-700"
-                          />
-                          <span className="text-sm text-slate-300">Großbuchstaben (A-Z)</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={includeLowercase}
-                            onChange={e => setIncludeLowercase(e.target.checked)}
-                            className="w-4 h-4 rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-700"
-                          />
-                          <span className="text-sm text-slate-300">Kleinbuchstaben (a-z)</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={includeNumbers}
-                            onChange={e => setIncludeNumbers(e.target.checked)}
-                            className="w-4 h-4 rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-700"
-                          />
-                          <span className="text-sm text-slate-300">Zahlen (0-9)</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={includeSymbols}
-                            onChange={e => setIncludeSymbols(e.target.checked)}
-                            className="w-4 h-4 rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-700"
-                          />
-                          <span className="text-sm text-slate-300">Zufällige Sonderzeichen (!@#$%...)</span>
-                        </label>
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={includeSymbols}
-                            onChange={e => setIncludeSymbols(e.target.checked)}
-                            className="w-4 h-4 rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-700"
-                          />
-                          <span className="text-sm text-slate-300">Zufällige Sonderzeichen (!@#$%...)</span>
-                        </label>
-                      </div>
-                    )}
-
-                    <Input
-                      label="Zeichen ausschließen"
-                      value={excludeChars}
-                      onChange={e => setExcludeChars(e.target.value)}
-                      placeholder="z.B. O0lI1"
-                      helperText="Diese Zeichen werden nicht verwendet"
-                    />
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-slate-300 mb-2">
+                        Zeichentypen
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={includeUppercase}
+                          onChange={e => setIncludeUppercase(e.target.checked)}
+                          className="w-4 h-4 rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-700"
+                        />
+                        <span className="text-sm text-slate-300">Großbuchstaben (A-Z)</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={includeLowercase}
+                          onChange={e => setIncludeLowercase(e.target.checked)}
+                          className="w-4 h-4 rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-700"
+                        />
+                        <span className="text-sm text-slate-300">Kleinbuchstaben (a-z)</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={includeNumbers}
+                          onChange={e => setIncludeNumbers(e.target.checked)}
+                          className="w-4 h-4 rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-700"
+                        />
+                        <span className="text-sm text-slate-300">Zahlen (0-9)</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={includeSymbols}
+                          onChange={e => setIncludeSymbols(e.target.checked)}
+                          className="w-4 h-4 rounded border-slate-600 text-indigo-600 focus:ring-indigo-500 bg-slate-700"
+                        />
+                        <span className="text-sm text-slate-300">Zufällige Sonderzeichen (!@#$%...)</span>
+                      </label>
+                    </div>
                   </>
                 )}
+
+                <Divider />
+
+                <Input
+                  label="Zeichen ausschließen"
+                  value={excludeChars}
+                  onChange={e => setExcludeChars(e.target.value)}
+                  placeholder="z.B. O0lI1"
+                  helperText="Diese Zeichen werden nicht verwendet"
+                />
               </div>
             </Card>
+
+            {mode === 'personal' && (
+              <div className="bg-slate-800/50 backdrop-blur-sm border border-slate-700 rounded-xl p-6 space-y-4">
+                <div className="space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <span className="text-sm font-medium text-slate-300">Kryptizität-Steuerung</span>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => setSettingsMode('automatic')}
+                        className={`px-3 py-2 rounded-lg border ${
+                          settingsMode === 'automatic'
+                            ? 'border-purple-500 bg-purple-500/20 text-purple-100'
+                            : 'border-slate-700 text-slate-300 hover:border-slate-500 hover:text-slate-100'
+                        } transition-all`}
+                      >
+                        Automatisch
+                      </button>
+                      <button
+                        onClick={() => setSettingsMode('manual')}
+                        className={`px-3 py-2 rounded-lg border ${
+                          settingsMode === 'manual'
+                            ? 'border-purple-500 bg-purple-500/20 text-purple-100'
+                            : 'border-slate-700 text-slate-300 hover:border-slate-500 hover:text-slate-100'
+                        } transition-all`}
+                      >
+                        Manuell
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    {settingsMode === 'automatic'
+                      ? 'System setzt Ersetzungen, Zeichenmix und Trennzeichen anhand des Kryptizitäts-Levels.'
+                      : 'Du steuerst Ersetzungen, Trennzeichen und Groß-/Kleinschreibung komplett selbst.'}
+                  </p>
+                </div>
+
+                {settingsMode === 'automatic' && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">
+                      Kryptizität: Level {crypticLevel}
+                    </label>
+                    <input
+                      type="range"
+                      min={1}
+                      max={5}
+                      value={crypticLevel}
+                      onChange={e => setCrypticLevel(+e.target.value)}
+                      className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                    />
+                    <div className="text-xs text-slate-400 mt-2 space-y-1">
+                      <p className="font-medium text-slate-300">
+                        {crypticLevel === 1 && '📝 Nutzt ca. 25% deiner Angaben (leicht merkbar)'}
+                        {crypticLevel === 2 && '📝 Nutzt ca. 40% deiner Angaben'}
+                        {crypticLevel === 3 && '📝 Nutzt ca. 60% deiner Angaben'}
+                        {crypticLevel === 4 && '📝 Nutzt ca. 80% deiner Angaben'}
+                        {crypticLevel === 5 && '📝 Nutzt 100% deiner Angaben für maximale Kryptizität'}
+                      </p>
+                      <p className="text-slate-500">
+                        Das System passt zusätzliche Ersetzungen, Sonderzeichen und Trennzeichen automatisch an.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {settingsMode === 'manual' && (
+                  <div className="space-y-3">
+                    <div className="p-3 bg-slate-800/50 rounded-lg border border-slate-700">
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={replaceChars}
+                          onChange={e => setReplaceChars(e.target.checked)}
+                          className="w-5 h-5 mt-0.5 rounded border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                        />
+                        <div className="flex-1">
+                          <span className="text-sm font-medium text-slate-200">Buchstaben ersetzen</span>
+                          <p className="text-xs text-slate-400 mt-1">
+                            {replaceChars
+                              ? 'Aktiviert: a→4, e→3, i→1, o→0, etc.'
+                              : 'Deaktiviert: Nur Groß-/Kleinschreibung'}
+                          </p>
+                        </div>
+                      </label>
+                    </div>
+
+                    <div className="p-3 bg-slate-800/50 rounded-lg border border-slate-700">
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={includeSymbols}
+                          onChange={e => setIncludeSymbols(e.target.checked)}
+                          className="w-5 h-5 rounded border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                        />
+                        <div className="flex-1">
+                          <span className="text-sm font-medium text-slate-200">Zufällige Sonderzeichen</span>
+                          <p className="text-xs text-slate-400 mt-1">(!@#$%...)</p>
+                        </div>
+                      </label>
+                    </div>
+
+                    <div className="p-3 bg-slate-800/50 rounded-lg border border-slate-700">
+                      <label className="block text-sm font-medium text-slate-200 mb-2">
+                        Trennzeichen
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="separator"
+                            checked={separator === 'none'}
+                            onChange={() => setSeparator('none')}
+                            className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                          />
+                          <span className="text-sm text-slate-300">Keine</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="separator"
+                            checked={separator === 'dash'}
+                            onChange={() => setSeparator('dash')}
+                            className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                          />
+                          <span className="text-sm text-slate-300 font-mono">Bindestrich -</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="separator"
+                            checked={separator === 'underscore'}
+                            onChange={() => setSeparator('underscore')}
+                            className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                          />
+                          <span className="text-sm text-slate-300 font-mono">Unterstrich _</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="separator"
+                            checked={separator === 'dot'}
+                            onChange={() => setSeparator('dot')}
+                            className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                          />
+                          <span className="text-sm text-slate-300 font-mono">Punkt .</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer col-span-2">
+                          <input
+                            type="radio"
+                            name="separator"
+                            checked={separator === 'random'}
+                            onChange={() => setSeparator('random')}
+                            className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                          />
+                          <span className="text-sm text-slate-300 font-mono">Zufällig (-, _, .)</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="p-3 bg-slate-800/50 rounded-lg border border-slate-700">
+                      <label className="block text-sm font-medium text-slate-200 mb-2">
+                        Groß-/Kleinschreibung
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="caseMode"
+                            checked={caseMode === 'original'}
+                            onChange={() => setCaseMode('original')}
+                            className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                          />
+                          <span className="text-sm text-slate-300">Original (Max)</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="caseMode"
+                            checked={caseMode === 'alternate'}
+                            onChange={() => setCaseMode('alternate')}
+                            className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                          />
+                          <span className="text-sm text-slate-300">Abwechselnd (MaX)</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="caseMode"
+                            checked={caseMode === 'upper'}
+                            onChange={() => setCaseMode('upper')}
+                            className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                          />
+                          <span className="text-sm text-slate-300">Groß (MAX)</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="caseMode"
+                            checked={caseMode === 'lower'}
+                            onChange={() => setCaseMode('lower')}
+                            className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                          />
+                          <span className="text-sm text-slate-300">Klein (max)</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="caseMode"
+                            checked={caseMode === 'capitalize'}
+                            onChange={() => setCaseMode('capitalize')}
+                            className="w-4 h-4 border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
+                          />
+                          <span className="text-sm text-slate-300">Kapitalisiert (Max)</span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Result Section */}
@@ -1624,6 +1935,11 @@ export default function GeneratorClient() {
                           style={{ width: `${strength.width}%` }}
                         />
                       </div>
+                      {mode === 'personal' && generationStyle === 'blocks' && (
+                        <p className="text-xs text-slate-500 mt-2 text-center">
+                          Basierend auf {numBlocks} Block{numBlocks > 1 ? 's' : ''} aus deinen Daten
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1693,6 +2009,121 @@ export default function GeneratorClient() {
                 </Button>
               </div>
             </Card>
+            
+            {/* Settings Summary */}
+            <Card className="bg-slate-800/70 border-slate-600">
+              <h2 className="text-lg font-semibold text-slate-100 mb-4 flex items-center gap-2">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                Aktuelle Einstellungen
+              </h2>
+              <div className="space-y-3 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Modus:</span>
+                  <span className="text-slate-200 font-medium">
+                    {mode === 'personal' ? 'Persönliche Daten' : 'Zufällig'}
+                  </span>
+                </div>
+                
+                {mode === 'personal' && (
+                  <>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Stil:</span>
+                      <span className="text-slate-200 font-medium">
+                        {generationStyle === 'characters' ? 'Zeichen' : 'Blöcke'}
+                      </span>
+                    </div>
+                    
+                    {generationStyle === 'blocks' && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Blöcke:</span>
+                        <span className="text-slate-200 font-medium font-semibold">{numBlocks}</span>
+                      </div>
+                    )}
+                    
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Einstellungen:</span>
+                      <span className="text-slate-200 font-medium">
+                        {settingsMode === 'automatic' ? `Automatisch (Level ${crypticLevel})` : 'Manuell'}
+                      </span>
+                    </div>
+                    
+                    {settingsMode === 'automatic' && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Kryptizität:</span>
+                        <span className="text-slate-200 font-medium">
+                          {crypticLevel === 1 ? 'Leicht merkbar' :
+                           crypticLevel === 2 ? 'Einfache Transformation' :
+                           crypticLevel === 3 ? 'Mittlere Kryptizität' :
+                           crypticLevel === 4 ? 'Hohe Kryptizität' : 'Maximale Kryptizität'}
+                        </span>
+                      </div>
+                    )}
+                    
+                    {settingsMode === 'manual' && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Buchstaben ersetzen:</span>
+                        <span className="text-slate-200 font-medium">
+                          {replaceChars ? 'Ja' : 'Nein'}
+                        </span>
+                      </div>
+                    )}
+                    
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Trennzeichen:</span>
+                      <span className="text-slate-200 font-medium">
+                        {separator === 'none' ? 'Keine' :
+                         separator === 'dash' ? 'Bindestrich' :
+                         separator === 'underscore' ? 'Unterstrich' :
+                         separator === 'dot' ? 'Punkt' : 'Zufällig'}
+                      </span>
+                    </div>
+                    
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Groß/Kleinschreibung:</span>
+                      <span className="text-slate-200 font-medium">
+                        {caseMode === 'original' ? 'Original' :
+                         caseMode === 'alternate' ? 'Abwechselnd' :
+                         caseMode === 'upper' ? 'Groß' :
+                         caseMode === 'lower' ? 'Klein' : 'Kapitalisieren'}
+                      </span>
+                    </div>
+                  </>
+                )}
+                
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Länge:</span>
+                  <span className="text-slate-200 font-medium">{length} Zeichen</span>
+                </div>
+                
+                <div className="pt-2 border-t border-slate-700/50 space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Großbuchstaben:</span>
+                    <span className="text-slate-200 font-medium">{includeUppercase ? '✓' : '✗'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Kleinbuchstaben:</span>
+                    <span className="text-slate-200 font-medium">{includeLowercase ? '✓' : '✗'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Zahlen:</span>
+                    <span className="text-slate-200 font-medium">{includeNumbers ? '✓' : '✗'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Sonderzeichen:</span>
+                    <span className="text-slate-200 font-medium">{includeSymbols ? '✓' : '✗'}</span>
+                  </div>
+                  {excludeChars && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Ausgeschlossen:</span>
+                      <span className="text-slate-200 font-mono">{excludeChars}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </Card>
 
             {mode === 'personal' && (
               <Alert variant="warning">
@@ -1736,7 +2167,9 @@ export default function GeneratorClient() {
                 </p>
                 <p className="text-sm">
                   {mode === 'personal'
-                    ? 'Jeder Klick auf "Generieren" erzeugt eine neue Variation aus deinen Daten. Merke dir die Variante!'
+                    ? generationStyle === 'blocks'
+                      ? `Jeder Klick auf "Generieren" kombiniert ${numBlocks} Blöcke aus deinen Daten. Merke dir die Variante!`
+                      : 'Jeder Klick auf "Generieren" erzeugt eine neue Variation aus deinen Daten. Merke dir die Variante!'
                     : 'Jedes generierte Passwort ist vollständig einzigartig und zufällig.'}
                 </p>
               </div>
@@ -1747,9 +2180,9 @@ export default function GeneratorClient() {
         {/* Vault Import Modal */}
         {showVaultImportModal && (
           <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <Card className="max-w-lg w-full bg-slate-900 border-slate-600 space-y-4 relative">
+            <Card className="max-w-3xl w-full bg-slate-900 border-slate-600 space-y-4 relative max-h-[90vh] overflow-y-auto">
               <button
-                onClick={() => setShowVaultImportModal(false)}
+                onClick={closeVaultImportModal}
                 className="absolute top-4 right-4 text-slate-400 hover:text-slate-100"
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1766,9 +2199,7 @@ export default function GeneratorClient() {
                   {vaultImportStatus.message}
                 </Alert>
               )}
-
-              <div className="space-y-3">
-                {/* Generated Password Display */}
+              <div className="space-y-4">
                 <div>
                   <label className="text-sm font-medium text-slate-300 block mb-2">Generiertes Passwort</label>
                   <div className="flex items-center gap-2">
@@ -1793,67 +2224,178 @@ export default function GeneratorClient() {
                     </button>
                   </div>
                 </div>
-                <Input
-                  label="Titel*"
-                  value={vaultImportTitle}
-                  onChange={e => setVaultImportTitle(e.target.value)}
-                  placeholder="z. B. Mail-Account"
-                  required
-                />
-                <Input
-                  label="Benutzername"
-                  value={vaultImportUsername}
-                  onChange={e => setVaultImportUsername(e.target.value)}
-                  placeholder="Benutzername (optional)"
-                />
-                <Input
-                  label="URL"
-                  value={vaultImportUrl}
-                  onChange={e => setVaultImportUrl(e.target.value)}
-                  placeholder="https://beispiel.de (optional)"
-                />
-                <div>
-                  <label className="text-sm font-medium text-slate-300 block mb-2">Kategorie</label>
-                  <div className="flex flex-wrap gap-2">
-                    {CATEGORIES.map(category => (
-                      <button
-                        key={category.id}
-                        type="button"
-                        onClick={() => setVaultImportCategory(category.id)}
-                        className={`px-3 py-1.5 rounded-lg border text-sm transition-colors ${
-                          vaultImportCategory === category.id
-                            ? `${category.color} ring-2 ring-offset-2 ring-offset-slate-900 ring-slate-500`
-                            : 'bg-slate-800/50 text-slate-400 border-slate-700 hover:bg-slate-700/50'
-                        }`}
-                      >
-                        {category.label}
-                      </button>
-                    ))}
+
+                <div className="bg-slate-800/60 border border-slate-700 rounded-lg p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="text-xs font-semibold text-slate-300 uppercase tracking-[0.2em]">
+                      Vorhandene Einträge
+                    </h4>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      onClick={handleCreateNewVaultEntry}
+                    >
+                      Neuen Eintrag anlegen
+                    </Button>
                   </div>
+                  {isLoadingVaultItems && (
+                    <p className="text-xs text-slate-500">Lade vorhandene Vault-Einträge …</p>
+                  )}
+                  {!isLoadingVaultItems && vaultItemsError && (
+                    <p className="text-xs text-red-400">{vaultItemsError}</p>
+                  )}
+                  {!isLoadingVaultItems && !vaultItemsError && availableVaultItems.length === 0 && (
+                    <p className="text-xs text-slate-500">
+                      Noch keine Einträge vorhanden. Lege unten einen neuen Eintrag an.
+                    </p>
+                  )}
+                  {!isLoadingVaultItems && !vaultItemsError && availableVaultItems.length > 0 && (
+                    <div className="max-h-40 overflow-y-auto space-y-1">
+                      {availableVaultItems.map(item => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => handleSelectVaultItem(item)}
+                          className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-colors ${
+                            selectedVaultItemId === item.id
+                              ? 'border-indigo-500 bg-indigo-500/10 text-indigo-200'
+                              : 'border-slate-700 bg-slate-800/40 text-slate-300 hover:border-slate-600 hover:bg-slate-800/60'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-medium">{item.title}</span>
+                            {item.username && (
+                              <span className="text-xs text-slate-400 truncate">{item.username}</span>
+                            )}
+                          </div>
+                          {item.url && (
+                            <p className="text-xs text-slate-500 truncate">{item.url}</p>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <Input
-                  label="Notizen"
-                  value={vaultImportNotes}
-                  onChange={e => setVaultImportNotes(e.target.value)}
-                  placeholder="Zusätzliche Informationen (optional)"
-                />
+
+                {isVaultImportFormActive ? (
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {/* Zugangsdaten */}
+                    <div className="bg-slate-800/60 border border-slate-700 rounded-lg p-4 space-y-4 md:col-span-2">
+                      <h4 className="text-xs font-semibold text-slate-300 uppercase tracking-[0.2em]">
+                        Zugangsdaten
+                      </h4>
+                      <Input
+                        label="Titel*"
+                        value={vaultImportTitle}
+                        onChange={e => handleVaultImportTitleChange(e.target.value)}
+                        placeholder="z. B. Mail-Account"
+                        list="vault-titles"
+                        required
+                      />
+                      <datalist id="vault-titles">
+                        {availableVaultItems.map(item => (
+                          <option key={item.id} value={item.title} />
+                        ))}
+                      </datalist>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <Input
+                          label="Benutzername"
+                          value={vaultImportUsername}
+                          onChange={e => setVaultImportUsername(e.target.value)}
+                          placeholder="Benutzername (optional)"
+                        />
+                        <Input
+                          label="URL"
+                          value={vaultImportUrl}
+                          onChange={e => setVaultImportUrl(e.target.value)}
+                          placeholder="https://beispiel.de (optional)"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Sicherheit & Rotation */}
+                    <div className="bg-slate-800/60 border border-slate-700 rounded-lg p-4 space-y-4">
+                      <h4 className="text-xs font-semibold text-slate-300 uppercase tracking-[0.2em]">
+                        Sicherheit &amp; Rotation
+                      </h4>
+                      <div className="space-y-3">
+                        <Input
+                          label="Ablaufdatum"
+                          type="date"
+                          value={vaultImportExpiresAt}
+                          onChange={e => setVaultImportExpiresAt(e.target.value)}
+                          helperText="Optional: Nach diesem Datum sollte ein neues Passwort erstellt werden"
+                        />
+                        <Input
+                          label="Rotationsintervall (Tage)"
+                          type="number"
+                          min={0}
+                          value={vaultImportRotationInterval}
+                          onChange={e => setVaultImportRotationInterval(e.target.value)}
+                          helperText="Optional: Automatisch nach X Tagen erneut generieren. 0 deaktiviert."
+                        />
+                      </div>
+                    </div>
+
+                    {/* Metadaten */}
+                    <div className="bg-slate-800/60 border border-slate-700 rounded-lg p-4 space-y-4">
+                      <h4 className="text-xs font-semibold text-slate-300 uppercase tracking-[0.2em]">
+                        Metadaten
+                      </h4>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-300 block">Kategorie</label>
+                        <div className="flex flex-wrap gap-2">
+                          {CATEGORIES.map(category => (
+                            <button
+                              key={category.id}
+                              type="button"
+                              onClick={() => setVaultImportCategory(category.id)}
+                              className={`px-3 py-1.5 rounded-lg border text-sm transition-colors ${
+                                vaultImportCategory === category.id
+                                  ? `${category.color} ring-2 ring-offset-2 ring-offset-slate-900 ring-slate-500`
+                                  : 'bg-slate-800/50 text-slate-400 border-slate-700 hover:bg-slate-700/50'
+                              }`}
+                            >
+                              {category.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <Input
+                        label="Notizen"
+                        value={vaultImportNotes}
+                        onChange={e => setVaultImportNotes(e.target.value)}
+                        placeholder="Zusätzliche Informationen (optional)"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-slate-800/40 border border-dashed border-slate-700/60 rounded-lg p-6 text-center text-sm text-slate-300">
+                    <p>Wähle einen bestehenden Eintrag aus der Liste oben, um ihn zu aktualisieren.</p>
+                    <p className="mt-2 text-slate-500">
+                      Oder klicke auf <span className="text-slate-300">„Neuen Eintrag anlegen“</span>, um einen neuen Datensatz zu erstellen.
+                    </p>
+                  </div>
+                )}
               </div>
 
               <Divider />
 
               <div className="flex justify-end gap-3">
-                <Button 
-                  variant="ghost" 
-                  onClick={() => setShowVaultImportModal(false)}
+                <Button
+                  variant="ghost"
+                  onClick={closeVaultImportModal}
                 >
-                  Abbrechen
+                  {isVaultImportFormActive ? 'Abbrechen' : 'Schließen'}
                 </Button>
-                <Button 
-                  variant="primary" 
-                  onClick={savePasswordToVault}
-                >
-                  Zum Vault hinzufügen
-                </Button>
+                {isVaultImportFormActive && (
+                  <Button
+                    variant="primary"
+                    onClick={savePasswordToVault}
+                  >
+                    Zum Vault hinzufügen
+                  </Button>
+                )}
               </div>
             </Card>
           </div>

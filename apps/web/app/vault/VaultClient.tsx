@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getStash, clearStash, GenStash } from '../../lib/stash';
 import AppShell from '../components/AppShell';
 import VaultItem from '../components/VaultItem';
@@ -37,6 +37,11 @@ function decodeFromBase64(b64: string) {
 
 type VaultGetResp = { blob: string };
 // Definiere eine erweiterte Vault-Datenstruktur
+type PasswordHistoryEntry = {
+  value: string;
+  changedAt: string;
+};
+
 type VaultItemType = {
   id: number;
   title: string;
@@ -47,6 +52,9 @@ type VaultItemType = {
   category?: string; // ID der Kategorie
   createdAt: string;
   updatedAt?: string;
+  expiresAt?: string;
+  passwordHistory?: PasswordHistoryEntry[];
+  rotationIntervalDays?: number;
 };
 
 // Erweiterte Vault-Datenstruktur mit Metadaten
@@ -84,6 +92,20 @@ export default function VaultClient() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copiedHistoryId, setCopiedHistoryId] = useState<string | null>(null);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
+  function formatDateTime(iso?: string) {
+    if (!iso) return '—';
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return '—';
+    return date.toLocaleString('de-DE', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
 
   // Form state
   const [formTitle, setFormTitle] = useState('');
@@ -92,12 +114,115 @@ export default function VaultClient() {
   const [formUrl, setFormUrl] = useState('');
   const [formNotes, setFormNotes] = useState('');
   const [formCategory, setFormCategory] = useState<string>('');
+  const [formExpiresAt, setFormExpiresAt] = useState<string>('');
+  const [formRotationInterval, setFormRotationInterval] = useState<string>('');
+  const originalPasswordRef = useRef<string>('');
 
   // Zustand für Kategorien
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
   const [customCategories, setCustomCategories] = useState<{id: string, label: string, color: string}[]>([]);
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
+
+  const expirationInfo = viewingItem ? getExpirationMeta(viewingItem.expiresAt) : null;
+  const categoryInfo = viewingItem?.category ? getCategoryInfo(viewingItem.category) : null;
+
+  function isoToDateInput(value?: string) {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toISOString().split('T')[0];
+  }
+
+  function dateInputToIso(value: string) {
+    if (!value) return undefined;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return undefined;
+    return date.toISOString();
+  }
+
+  function getExpirationMeta(expiresAt?: string) {
+    if (!expiresAt) return null;
+    const expiryDate = new Date(expiresAt);
+    if (Number.isNaN(expiryDate.getTime())) return null;
+    const now = new Date();
+    const diffMs = expiryDate.getTime() - now.getTime();
+    const daysLeft = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    return {
+      expiryDate,
+      isExpired: diffMs < 0,
+      daysLeft,
+    };
+  }
+
+  function normalizeInterval(value: string) {
+    const parsed = Number(value);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      return undefined;
+    }
+    return Math.round(parsed);
+  }
+
+  function calculateNextExpiration(explicitIso: string | undefined, intervalDays?: number, referenceIso?: string) {
+    if (explicitIso) return explicitIso;
+    if (!intervalDays) return undefined;
+    const referenceDate = referenceIso ? new Date(referenceIso) : new Date();
+    if (Number.isNaN(referenceDate.getTime())) return undefined;
+    const next = new Date(referenceDate.getTime() + intervalDays * 24 * 60 * 60 * 1000);
+    return next.toISOString();
+  }
+
+  function derivePasswordFromExisting() {
+    const base = formPassword || originalPasswordRef.current;
+    const fallbackCharset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%&*';
+
+    const randomChar = (charset: string) => {
+      if (typeof window !== 'undefined' && window.crypto?.getRandomValues) {
+        const array = new Uint32Array(1);
+        window.crypto.getRandomValues(array);
+        return charset[array[0] % charset.length];
+      }
+      return charset[Math.floor(Math.random() * charset.length)];
+    };
+
+    const mutate = (value: string) => {
+      if (!value) {
+        let generated = '';
+        for (let i = 0; i < 16; i++) {
+          generated += randomChar(fallbackCharset);
+        }
+        return generated;
+      }
+
+      const substitutions: Record<string, string> = {
+        'a': '4',
+        'e': '3',
+        'i': '1',
+        'o': '0',
+        's': '5',
+        'g': '9'
+      };
+
+      const rotated = value.length > 2 ? value.slice(1) + value[0] : value.split('').reverse().join('');
+      const replaced = rotated
+        .split('')
+        .map((char, index) => {
+          const lower = char.toLowerCase();
+          if (substitutions[lower] && index % 3 === 0) {
+            return substitutions[lower];
+          }
+          return index % 2 === 0 ? char.toUpperCase() : char.toLowerCase();
+        })
+        .join('');
+
+      const suffix = `${randomChar('!@#')}${randomChar('0123456789')}`;
+      return `${replaced}${suffix}`;
+    };
+
+    const newPassword = mutate(base);
+    originalPasswordRef.current = newPassword;
+    setFormPassword(newPassword);
+  }
 
   const updateStatus = useCallback((msg: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
     setStatus(msg);
@@ -232,7 +357,13 @@ export default function VaultClient() {
       username: '',
       password: pending.password,
       category: 'login', // Standardkategorie
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      passwordHistory: [
+        {
+          value: pending.password,
+          changedAt: new Date().toISOString(),
+        },
+      ],
     };
     setItems([...items, newItem]);
     updateStatus(`Eintrag "${newItem.title}" hinzugefügt. Speichere …`, 'success');
@@ -246,6 +377,8 @@ export default function VaultClient() {
     setViewingItem(item);
     setShowPassword(false);
     setCopied(false);
+    setCopiedHistoryId(null);
+    setHistoryExpanded(false);
     setShowDetailModal(true);
   }
 
@@ -257,6 +390,9 @@ export default function VaultClient() {
     setFormUrl('');
     setFormNotes('');
     setFormCategory('login'); // Standardkategorie
+    setFormExpiresAt('');
+    setFormRotationInterval('');
+    originalPasswordRef.current = '';
     setShowAddModal(true);
   }
 
@@ -269,6 +405,9 @@ export default function VaultClient() {
     setFormUrl(item.url || '');
     setFormNotes(item.notes || '');
     setFormCategory(item.category || 'login');
+    setFormExpiresAt(isoToDateInput(item.expiresAt));
+    setFormRotationInterval(item.rotationIntervalDays ? String(item.rotationIntervalDays) : '');
+    originalPasswordRef.current = item.password;
     setShowAddModal(true);
   }
 
@@ -276,6 +415,7 @@ export default function VaultClient() {
     if (viewingItem) {
       navigator.clipboard.writeText(viewingItem.password);
       setCopied(true);
+      setCopiedHistoryId(null);
       setTimeout(() => setCopied(false), 2000);
     }
   }
@@ -286,11 +426,23 @@ export default function VaultClient() {
     }
   }
 
+  function copyHistoryPassword(entry: PasswordHistoryEntry) {
+    navigator.clipboard.writeText(entry.value);
+    setCopied(false);
+    setCopiedHistoryId(entry.changedAt);
+    setTimeout(() => setCopiedHistoryId(null), 2000);
+  }
+
   function saveItem() {
     if (!formTitle || !formPassword) {
       updateStatus('Titel und Passwort sind erforderlich', 'error');
       return;
     }
+
+    const nowIso = new Date().toISOString();
+    const explicitExpiresIso = dateInputToIso(formExpiresAt);
+    const intervalDays = normalizeInterval(formRotationInterval);
+    const effectiveExpiresAt = calculateNextExpiration(explicitExpiresIso, intervalDays, nowIso);
 
     if (editingItem) {
       // Edit existing item
@@ -299,12 +451,30 @@ export default function VaultClient() {
           ? {
               ...item,
               title: formTitle,
-              username: formUsername,
+              username: formUsername || undefined,
               password: formPassword,
-              url: formUrl,
-              notes: formNotes,
+              url: formUrl || undefined,
+              notes: formNotes || undefined,
               category: formCategory,
-              updatedAt: new Date().toISOString()
+              expiresAt: effectiveExpiresAt,
+              rotationIntervalDays: intervalDays,
+              passwordHistory: (() => {
+                const history = item.passwordHistory ? [...item.passwordHistory] : [];
+                if (history.length === 0) {
+                  history.push({
+                    value: item.password,
+                    changedAt: item.updatedAt || item.createdAt,
+                  });
+                }
+                if (formPassword !== item.password) {
+                  history.push({
+                    value: formPassword,
+                    changedAt: nowIso,
+                  });
+                }
+                return history;
+              })(),
+              updatedAt: nowIso
             }
           : item,
       ));
@@ -319,7 +489,15 @@ export default function VaultClient() {
         url: formUrl || undefined,
         notes: formNotes || undefined,
         category: formCategory,
-        createdAt: new Date().toISOString()
+        createdAt: nowIso,
+        expiresAt: effectiveExpiresAt,
+        rotationIntervalDays: intervalDays,
+        passwordHistory: [
+          {
+            value: formPassword,
+            changedAt: nowIso,
+          },
+        ],
       };
       setItems([...items, newItem]);
       updateStatus(`Eintrag "${formTitle}" hinzugefügt.`, 'success');
@@ -627,20 +805,27 @@ export default function VaultClient() {
               </button>
 
               {/* Header */}
-              <div className="flex items-center gap-3 pr-8">
+              <div className="flex items-start gap-3 pr-8">
                 <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg shadow-indigo-500/20">
                   <span className="text-white text-xl font-bold">
                     {viewingItem.title.charAt(0).toUpperCase()}
                   </span>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-xl font-semibold text-slate-100">{viewingItem.title}</h3>
+                <div className="flex-1 min-w-0 space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-xl font-semibold text-slate-100 truncate">{viewingItem.title}</h3>
+                    {categoryInfo && (
+                      <span className={`px-2 py-0.5 rounded text-xs ${categoryInfo.color}`}>
+                        {categoryInfo.label}
+                      </span>
+                    )}
+                  </div>
                   {viewingItem.url && (
                     <a
                       href={viewingItem.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-sm text-indigo-400 hover:text-indigo-300 truncate block"
+                      className="text-xs text-indigo-400 hover:text-indigo-300 truncate block"
                     >
                       {viewingItem.url}
                     </a>
@@ -652,28 +837,90 @@ export default function VaultClient() {
 
               {/* Details */}
               <div className="space-y-4">
-                {/* Username */}
-                {viewingItem.username && (
-                  <div>
-                    <label className="text-xs text-slate-400 block mb-2">Benutzername</label>
-                    <div className="flex items-center gap-2">
-                      <code className="flex-1 text-sm text-slate-300 bg-slate-800 px-3 py-2 rounded-lg border border-slate-700 truncate">
-                        {viewingItem.username}
-                      </code>
-                      <button
-                        onClick={copyUsername}
-                        className="p-2 hover:bg-slate-700/50 rounded-lg transition-colors flex-shrink-0"
-                        title="Kopieren"
-                      >
-                        <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                        </svg>
-                      </button>
+                <div className="bg-slate-800/60 border border-slate-700 rounded-lg p-4 space-y-3">
+                  <h4 className="text-xs font-semibold text-slate-300 uppercase tracking-[0.2em]">
+                    Überblick
+                  </h4>
+                  <div className="grid grid-cols-1 gap-3 text-sm text-slate-200 md:grid-cols-2">
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs uppercase tracking-[0.18em] text-slate-500">Benutzername</span>
+                      {viewingItem.username ? (
+                        <div className="flex items-center gap-2">
+                          <span className="truncate" title={viewingItem.username}>{viewingItem.username}</span>
+                          <button
+                            onClick={copyUsername}
+                            className="p-1.5 hover:bg-slate-700/60 rounded-md transition-colors"
+                            title="Benutzername kopieren"
+                          >
+                            <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-slate-500">—</span>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs uppercase tracking-[0.18em] text-slate-500">Ablaufdatum</span>
+                      {expirationInfo ? (
+                        <div className="flex items-center gap-2">
+                          <span>{expirationInfo.expiryDate.toLocaleDateString('de-DE', {
+                            year: 'numeric',
+                            month: 'short',
+                            day: 'numeric'
+                          })}</span>
+                          <Badge
+                            variant={
+                              expirationInfo.isExpired
+                                ? 'error'
+                                : expirationInfo.daysLeft <= 7
+                                  ? 'warning'
+                                  : 'success'
+                            }
+                          >
+                            {expirationInfo.isExpired
+                              ? 'Abgelaufen'
+                              : expirationInfo.daysLeft <= 0
+                                ? 'Heute'
+                                : `${expirationInfo.daysLeft} ${expirationInfo.daysLeft === 1 ? 'Tag' : 'Tage'}`}
+                          </Badge>
+                        </div>
+                      ) : (
+                        <span className="text-slate-500">Keins gesetzt</span>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs uppercase tracking-[0.18em] text-slate-500">Rotation</span>
+                      <span className="text-slate-200">
+                        {viewingItem.rotationIntervalDays
+                          ? `Alle ${viewingItem.rotationIntervalDays} ${viewingItem.rotationIntervalDays === 1 ? 'Tag' : 'Tage'}`
+                          : 'Keine Vorgabe'}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs uppercase tracking-[0.18em] text-slate-500">Passwort-Verlauf</span>
+                      <span className="text-slate-200">
+                        {viewingItem.passwordHistory?.length
+                          ? `${viewingItem.passwordHistory.length} Varianten`
+                          : 'Keine Historie'}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs uppercase tracking-[0.18em] text-slate-500">Erstellt</span>
+                      <span className="text-slate-200">{formatDateTime(viewingItem.createdAt)}</span>
+                    </div>
+
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs uppercase tracking-[0.18em] text-slate-500">Aktualisiert</span>
+                      <span className="text-slate-200">{formatDateTime(viewingItem.updatedAt)}</span>
                     </div>
                   </div>
-                )}
-
-                {/* Password */}
+                </div>
                 <div>
                   <label className="text-xs text-slate-400 block mb-2">Passwort</label>
                   <div className="flex items-center gap-2">
@@ -687,7 +934,7 @@ export default function VaultClient() {
                     >
                       {showPassword ? (
                         <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268-2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
                         </svg>
                       ) : (
                         <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -714,6 +961,81 @@ export default function VaultClient() {
                   </div>
                 </div>
 
+                {/* Password History */}
+                {viewingItem.passwordHistory && viewingItem.passwordHistory.length > 0 && (
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => setHistoryExpanded(prev => !prev)}
+                      className="w-full flex items-center justify-between text-xs text-slate-300 bg-slate-800/50 hover:bg-slate-800/70 border border-slate-700 rounded-lg px-3 py-2 transition-colors"
+                    >
+                      <span className="font-semibold tracking-[0.2em] uppercase">
+                        Passwort-Historie
+                      </span>
+                      <div className="flex items-center gap-2 text-slate-400">
+                        <span>{viewingItem.passwordHistory.length}</span>
+                        <Badge variant="default">History</Badge>
+                        <svg
+                          className={`w-4 h-4 transition-transform ${historyExpanded ? 'rotate-180' : ''}`}
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </div>
+                    </button>
+                    {historyExpanded && (
+                      <div className="mt-2 space-y-1">
+                        {[...viewingItem.passwordHistory]
+                          .sort((a, b) => new Date(b.changedAt).getTime() - new Date(a.changedAt).getTime())
+                          .map((entry, index) => {
+                            const isLatest = index === 0;
+                            return (
+                              <div
+                                key={`${entry.changedAt}-${index}`}
+                                className="flex items-center justify-between gap-3 px-3 py-1.5 rounded-md border border-slate-700/70 bg-slate-800/60"
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <code className="text-xs text-slate-200 font-mono truncate block">
+                                    {entry.value}
+                                  </code>
+                                  <p className="text-[10px] text-slate-500 mt-0.5">
+                                    {new Date(entry.changedAt).toLocaleString('de-DE', {
+                                      year: 'numeric',
+                                      month: 'short',
+                                      day: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit'
+                                    })}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-2 flex-shrink-0">
+                                {isLatest && <Badge variant="info">Aktuell</Badge>}
+                                <button
+                                  onClick={() => copyHistoryPassword(entry)}
+                                  className="p-1.5 hover:bg-slate-700/60 rounded-md transition-colors"
+                                  title="Passwort kopieren"
+                                >
+                                    {copiedHistoryId === entry.changedAt ? (
+                                      <svg className="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                      </svg>
+                                    ) : (
+                                      <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                      </svg>
+                                    )}
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Notes */}
                 {viewingItem.notes && (
                   <div>
@@ -723,38 +1045,6 @@ export default function VaultClient() {
                     </div>
                   </div>
                 )}
-
-                {/* Category */}
-                {viewingItem.category && (
-                  <div>
-                    <label className="text-xs text-slate-400 block mb-2">Kategorie</label>
-                    <div className={`inline-block px-2.5 py-1 rounded text-sm ${
-                      (() => {
-                        const categoryInfo = [...CATEGORIES, ...customCategories].find(cat => cat.id === viewingItem.category);
-                        return categoryInfo ? categoryInfo.color : CATEGORIES[CATEGORIES.length - 1].color; // fallback to 'other'
-                      })()
-                    }`}>
-                      {(() => {
-                        const categoryInfo = [...CATEGORIES, ...customCategories].find(cat => cat.id === viewingItem.category);
-                        return categoryInfo ? categoryInfo.label : 'Sonstige'; // fallback to 'Sonstige'
-                      })()}
-                    </div>
-                  </div>
-                )}
-
-                {/* Created Date */}
-                <div>
-                  <label className="text-xs text-slate-400 block mb-2">Erstellt am</label>
-                  <div className="text-sm text-slate-300">
-                    {new Date(viewingItem.createdAt).toLocaleDateString('de-DE', {
-                      year: 'numeric',
-                      month: 'long',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })}
-                  </div>
-                </div>
               </div>
 
               <Divider />
@@ -793,7 +1083,7 @@ export default function VaultClient() {
         {/* Add/Edit Modal */}
         {showAddModal && (
           <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <Card className="max-w-lg w-full bg-slate-900 border-slate-600 space-y-4 relative">
+            <Card className="max-w-3xl w-full bg-slate-900 border-slate-600 space-y-4 relative max-h-[90vh] overflow-y-auto">
               <button
                 onClick={() => setShowAddModal(false)}
                 className="absolute top-4 right-4 text-slate-400 hover:text-slate-100"
@@ -807,57 +1097,112 @@ export default function VaultClient() {
                 {editingItem ? 'Eintrag bearbeiten' : 'Neuer Eintrag'}
               </h3>
 
-              <div className="space-y-3">
-                <Input
-                  label="Titel"
-                  value={formTitle}
-                  onChange={e => setFormTitle(e.target.value)}
-                  placeholder="z. B. Mail-Account"
-                  required
-                />
-                <Input
-                  label="Benutzername"
-                  value={formUsername}
-                  onChange={e => setFormUsername(e.target.value)}
-                />
-                <Input
-                  label="Passwort"
-                  value={formPassword}
-                  onChange={e => setFormPassword(e.target.value)}
-                  required
-                />
-                <Input
-                  label="URL"
-                  value={formUrl}
-                  onChange={e => setFormUrl(e.target.value)}
-                  placeholder="https://"
-                />
-                <Input
-                  label="Notizen"
-                  value={formNotes}
-                  onChange={e => setFormNotes(e.target.value)}
-                  placeholder="Zusätzliche Informationen"
-                />
-                
-                {/* Category Selection */}
-                <div>
-                  <label className="text-sm font-medium text-slate-300 block mb-2">Kategorie</label>
-                  <div className="flex flex-wrap gap-2">
-                    {([...CATEGORIES, ...customCategories] as {id: string, label: string, color: string}[]).map(category => (
-                      <button
-                        key={category.id}
-                        type="button"
-                        onClick={() => setFormCategory(category.id)}
-                        className={`px-3 py-1.5 rounded-lg border text-sm transition-colors ${
-                          formCategory === category.id
-                            ? `${category.color} ring-2 ring-offset-2 ring-offset-slate-900 ring-slate-500`
-                            : 'bg-slate-800/50 text-slate-400 border-slate-700 hover:bg-slate-700/50'
-                        }`}
-                      >
-                        {category.label}
-                      </button>
-                    ))}
+              <div className="grid gap-4 md:grid-cols-2">
+                {/* Zugangsdaten */}
+                <div className="bg-slate-800/60 border border-slate-700 rounded-lg p-4 space-y-4 md:col-span-2">
+                  <h4 className="text-xs font-semibold text-slate-300 uppercase tracking-[0.2em]">
+                    Zugangsdaten
+                  </h4>
+                  <Input
+                    label="Titel"
+                    value={formTitle}
+                    onChange={e => setFormTitle(e.target.value)}
+                    placeholder="z. B. Mail-Account"
+                    required
+                  />
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <Input
+                      label="Benutzername"
+                      value={formUsername}
+                      onChange={e => setFormUsername(e.target.value)}
+                    />
+                    <div className="space-y-2">
+                      <Input
+                        label="Passwort"
+                        value={formPassword}
+                        onChange={e => setFormPassword(e.target.value)}
+                        required
+                      />
+                      <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400">
+                        <button
+                          type="button"
+                          onClick={derivePasswordFromExisting}
+                          className="text-indigo-400 hover:text-indigo-300 transition-colors"
+                        >
+                          Neues Passwort ableiten
+                        </button>
+                        <span className="text-slate-600">|</span>
+                        <a
+                          href="/generator"
+                          className="text-slate-400 hover:text-slate-200 transition-colors"
+                        >
+                          Zum Passwort-Generator
+                        </a>
+                      </div>
+                    </div>
                   </div>
+                  <Input
+                    label="URL"
+                    value={formUrl}
+                    onChange={e => setFormUrl(e.target.value)}
+                    placeholder="https://"
+                  />
+                </div>
+
+                {/* Sicherheit & Rotation */}
+                <div className="bg-slate-800/60 border border-slate-700 rounded-lg p-4 space-y-4">
+                  <h4 className="text-xs font-semibold text-slate-300 uppercase tracking-[0.2em]">
+                    Sicherheit &amp; Rotation
+                  </h4>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <Input
+                      label="Ablaufdatum"
+                      type="date"
+                      value={formExpiresAt}
+                      onChange={e => setFormExpiresAt(e.target.value)}
+                      helperText="Optional: Nach diesem Datum sollte das Passwort erneuert werden"
+                    />
+                    <Input
+                      label="Rotationsintervall (Tage)"
+                      type="number"
+                      min={0}
+                      value={formRotationInterval}
+                      onChange={e => setFormRotationInterval(e.target.value)}
+                      helperText="Optional: Automatisch nach X Tagen erinnern. 0 deaktiviert."
+                    />
+                  </div>
+                </div>
+
+                {/* Metadaten */}
+                <div className="bg-slate-800/60 border border-slate-700 rounded-lg p-4 space-y-4">
+                  <h4 className="text-xs font-semibold text-slate-300 uppercase tracking-[0.2em]">
+                    Metadaten
+                  </h4>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-300 block">Kategorie</label>
+                    <div className="flex flex-wrap gap-2">
+                      {([...CATEGORIES, ...customCategories] as {id: string, label: string, color: string}[]).map(category => (
+                        <button
+                          key={category.id}
+                          type="button"
+                          onClick={() => setFormCategory(category.id)}
+                          className={`px-3 py-1.5 rounded-lg border text-sm transition-colors ${
+                            formCategory === category.id
+                              ? `${category.color} ring-2 ring-offset-2 ring-offset-slate-900 ring-slate-500`
+                              : 'bg-slate-800/50 text-slate-400 border-slate-700 hover:bg-slate-700/50'
+                          }`}
+                        >
+                          {category.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <Input
+                    label="Notizen"
+                    value={formNotes}
+                    onChange={e => setFormNotes(e.target.value)}
+                    placeholder="Zusätzliche Informationen"
+                  />
                 </div>
               </div>
 

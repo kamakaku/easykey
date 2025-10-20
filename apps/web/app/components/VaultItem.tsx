@@ -1,5 +1,7 @@
 'use client';
 
+import { Badge } from './UI';
+
 interface VaultItemProps {
   item: {
     id: number;
@@ -11,11 +13,27 @@ interface VaultItemProps {
     category?: string; // ID der Kategorie
     createdAt: string;
     updatedAt?: string;
+    expiresAt?: string;
+    passwordHistory?: { value: string; changedAt: string }[];
   };
   onClick: (item: any) => void;
 }
 
+function getExpirationMeta(expiresAt?: string) {
+  if (!expiresAt) return null;
+  const expiry = new Date(expiresAt);
+  if (Number.isNaN(expiry.getTime())) return null;
+  const diffMs = expiry.getTime() - Date.now();
+  const daysLeft = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+  return {
+    isExpired: diffMs < 0,
+    daysLeft,
+  };
+}
+
 export default function VaultItem({ item, onClick }: VaultItemProps) {
+  const expirationMeta = getExpirationMeta(item.expiresAt);
+
   return (
     <div
       onClick={() => onClick(item)}
@@ -30,7 +48,7 @@ export default function VaultItem({ item, onClick }: VaultItemProps) {
 
       {/* Content */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <h3 className="text-base font-semibold text-slate-100 truncate group-hover:text-white transition-colors">
             {item.title}
           </h3>
@@ -52,8 +70,25 @@ export default function VaultItem({ item, onClick }: VaultItemProps) {
                item.category === 'social' ? 'Social Media' :
                item.category === 'work' ? 'Arbeit' :
                // For custom categories, display the ID as label since we don't have the label here
-               item.category.charAt(0).toUpperCase() + item.category.slice(1)}
+              item.category.charAt(0).toUpperCase() + item.category.slice(1)}
             </span>
+          )}
+          {expirationMeta && (
+            <Badge
+              variant={
+                expirationMeta.isExpired
+                  ? 'error'
+                  : expirationMeta.daysLeft <= 7
+                    ? 'warning'
+                    : 'success'
+              }
+            >
+              {expirationMeta.isExpired
+                ? 'Abgelaufen'
+                : expirationMeta.daysLeft <= 0
+                  ? 'Läuft heute ab'
+                  : `Noch ${expirationMeta.daysLeft} ${expirationMeta.daysLeft === 1 ? 'Tag' : 'Tage'}`}
+            </Badge>
           )}
         </div>
         {item.username && (
@@ -61,6 +96,12 @@ export default function VaultItem({ item, onClick }: VaultItemProps) {
         )}
         {!item.username && item.url && (
           <p className="text-sm text-slate-400 truncate">{item.url}</p>
+        )}
+        {item.rotationIntervalDays && (
+          <p className="text-xs text-slate-500">
+            Rotation: alle {item.rotationIntervalDays}{' '}
+            {item.rotationIntervalDays === 1 ? 'Tag' : 'Tage'}
+          </p>
         )}
       </div>
 
