@@ -63,6 +63,14 @@ type VaultData = {
   customCategories?: {id: string, label: string, color: string}[];
 };
 
+type FilterBookmark = {
+  id: string;
+  label: string;
+  search: string;
+  category: string;
+  createdAt: string;
+};
+
 // Verfügbare Kategorien mit Farben
 const CATEGORIES = [
   { id: 'login', label: 'Login', color: 'bg-blue-500/10 text-blue-400 border-blue-500/20' },
@@ -82,6 +90,8 @@ const CATEGORY_COLOR_POOL = [
   'bg-violet-500/10 text-violet-400 border-violet-500/20',
   'bg-fuchsia-500/10 text-fuchsia-400 border-fuchsia-500/20',
 ] as const;
+
+const FILTER_BOOKMARK_KEY = 'easykey-vault-filter-bookmarks';
 
 function slugifyCategory(label: string) {
   return label
@@ -131,6 +141,7 @@ export default function VaultClient() {
   const [copied, setCopied] = useState(false);
   const [copiedHistoryId, setCopiedHistoryId] = useState<string | null>(null);
   const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [filterBookmarks, setFilterBookmarks] = useState<FilterBookmark[]>([]);
   function formatDateTime(iso?: string) {
     if (!iso) return '—';
     const date = new Date(iso);
@@ -155,6 +166,7 @@ export default function VaultClient() {
   const [formExpiresAt, setFormExpiresAt] = useState<string>('');
   const [formRotationInterval, setFormRotationInterval] = useState<string>('');
   const originalPasswordRef = useRef<string>('');
+  const bookmarksLoadedRef = useRef(false);
 
   // Zustand für Kategorien
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
@@ -626,6 +638,15 @@ export default function VaultClient() {
     addPendingItem();
   }, [pending]);
 
+  useEffect(() => {
+    loadFilterBookmarks();
+  }, []);
+
+  useEffect(() => {
+    if (!bookmarksLoadedRef.current) return;
+    persistFilterBookmarks(filterBookmarks);
+  }, [filterBookmarks]);
+
   const filteredItems = items.filter(item => {
     const q = searchQuery.toLowerCase();
     const matchesSearch = (
@@ -652,6 +673,103 @@ export default function VaultClient() {
     }
     return CATEGORIES[CATEGORIES.length - 1];
   }
+
+  function loadFilterBookmarks() {
+    if (typeof window === 'undefined') return;
+    try {
+      const stored = window.localStorage.getItem(FILTER_BOOKMARK_KEY);
+      if (!stored) {
+        bookmarksLoadedRef.current = true;
+        return;
+      }
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) {
+        setFilterBookmarks(parsed.filter((bookmark: any) =>
+          bookmark &&
+          typeof bookmark.id === 'string' &&
+          typeof bookmark.label === 'string'
+        ));
+      }
+      bookmarksLoadedRef.current = true;
+    } catch (error) {
+      console.warn('Konnte Filter-Lesezeichen nicht laden:', error);
+      bookmarksLoadedRef.current = true;
+    }
+  }
+
+  function persistFilterBookmarks(next: FilterBookmark[]) {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(FILTER_BOOKMARK_KEY, JSON.stringify(next));
+    } catch (error) {
+      console.warn('Konnte Filter-Lesezeichen nicht speichern:', error);
+    }
+  }
+
+  function handleAddBookmark() {
+    const trimmedSearch = searchQuery.trim();
+    const defaultParts: string[] = [];
+    if (trimmedSearch) {
+      defaultParts.push(`"${trimmedSearch}"`);
+    }
+    if (selectedCategoryFilter !== 'all') {
+      const categoryLabel = getCategoryInfo(selectedCategoryFilter)?.label || 'Kategorie';
+      defaultParts.push(categoryLabel);
+    }
+    const defaultLabel = defaultParts.length > 0 ? defaultParts.join(' · ') : 'Alle Einträge';
+    const label = typeof window !== 'undefined'
+      ? window.prompt('Name für das Filter-Lesezeichen', defaultLabel)
+      : null;
+    if (!label) return;
+    const finalLabel = label.trim();
+    if (!finalLabel) {
+      updateStatus('Kein Name angegeben.', 'warning');
+      return;
+    }
+
+    const existingIndex = filterBookmarks.findIndex(
+      bookmark =>
+        bookmark.search === searchQuery &&
+        bookmark.category === selectedCategoryFilter,
+    );
+
+    let nextBookmarks: FilterBookmark[] = [];
+
+    if (existingIndex >= 0) {
+      nextBookmarks = filterBookmarks.map((bookmark, index) =>
+        index === existingIndex
+          ? { ...bookmark, label: finalLabel }
+          : bookmark,
+      );
+      updateStatus(`Filter "${finalLabel}" aktualisiert.`, 'success');
+    } else {
+      const newBookmark: FilterBookmark = {
+        id: `${Date.now()}`,
+        label: finalLabel,
+        search: searchQuery,
+        category: selectedCategoryFilter,
+        createdAt: new Date().toISOString(),
+      };
+      nextBookmarks = [...filterBookmarks, newBookmark];
+      updateStatus(`Filter "${finalLabel}" gespeichert.`, 'success');
+    }
+
+    setFilterBookmarks(nextBookmarks);
+  }
+
+  function handleApplyBookmark(bookmark: FilterBookmark) {
+    setSearchQuery(bookmark.search);
+    setSelectedCategoryFilter(bookmark.category);
+    if (bookmark.label) {
+      updateStatus(`Filter "${bookmark.label}" geladen.`, 'info');
+    }
+  }
+
+function handleDeleteBookmark(bookmarkId: string) {
+  const next = filterBookmarks.filter(bookmark => bookmark.id !== bookmarkId);
+  setFilterBookmarks(next);
+  updateStatus('Filter-Lesezeichen entfernt.', 'warning');
+}
 
   const handleBeforeLogout = useCallback(async () => {
     if (hasPendingSave) {
@@ -714,7 +832,7 @@ export default function VaultClient() {
                 <h2 className="text-lg font-semibold text-slate-100">Einträge</h2>
                 <p className="text-sm text-slate-400">Verwalte deine Zugangsdaten – Änderungen werden automatisch gespeichert.</p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 md:items-end md:w-full">
                 <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
                   <Input
                     placeholder="Suche nach Titel, Benutzername oder URL"
@@ -722,7 +840,7 @@ export default function VaultClient() {
                     onChange={e => setSearchQuery(e.target.value)}
                     className="w-full sm:w-64 mb-2 sm:mb-0 sm:mr-2"
                   />
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 flex-wrap sm:flex-nowrap">
                     <select
                       value={selectedCategoryFilter}
                       onChange={e => setSelectedCategoryFilter(e.target.value)}
@@ -735,11 +853,68 @@ export default function VaultClient() {
                         </option>
                       ))}
                     </select>
+                    <Button
+                      variant="ghost"
+                      onClick={handleAddBookmark}
+                      className="flex-shrink-0"
+                    >
+                      Filter speichern
+                    </Button>
                     <Button variant="secondary" onClick={openAddModal}>
                       Neuer Eintrag
                     </Button>
                   </div>
                 </div>
+                {filterBookmarks.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {filterBookmarks.map(bookmark => (
+                      <div
+                        key={bookmark.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => handleApplyBookmark(bookmark)}
+                        onKeyDown={event => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            handleApplyBookmark(bookmark);
+                          }
+                        }}
+                        className="group flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/60 hover:bg-slate-700/60 hover:border-slate-500 text-slate-200 transition-colors cursor-pointer"
+                        title={`Suche: ${bookmark.search || '—'} • Kategorie: ${
+                          bookmark.category === 'all'
+                            ? 'Alle'
+                            : getCategoryInfo(bookmark.category)?.label || 'Unbekannt'
+                        }`}
+                      >
+                        <span className="text-sm truncate max-w-[10rem] sm:max-w-[12rem]">
+                          {bookmark.label}
+                        </span>
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={event => {
+                            event.stopPropagation();
+                            handleDeleteBookmark(bookmark.id);
+                          }}
+                          onKeyDown={event => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              handleDeleteBookmark(bookmark.id);
+                            }
+                          }}
+                          className="flex h-5 w-5 items-center justify-center rounded hover:bg-slate-700 text-slate-400 hover:text-slate-100 transition-colors cursor-pointer"
+                          aria-label={`Filter "${bookmark.label}" löschen`}
+                        >
+                          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                          </svg>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
