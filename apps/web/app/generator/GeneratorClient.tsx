@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import AppShell from '../components/AppShell';
 import { Card, Button, Input, Alert, Badge, Divider } from '../components/UI';
 import { useAuth } from '../context/AuthContext';
@@ -20,8 +20,12 @@ type VaultItemSummary = {
   url?: string;
   notes?: string;
   category?: string;
+  categoryLabel?: string;
+  categoryColor?: string;
   expiresAt?: string;
   rotationIntervalDays?: number;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 // Verfügbare Kategorien mit Farben (gleich wie im Vault)
@@ -34,6 +38,123 @@ const CATEGORIES = [
   { id: 'work', label: 'Arbeit', color: 'bg-orange-500/10 text-orange-400 border-orange-500/20' },
   { id: 'other', label: 'Sonstige', color: 'bg-slate-500/10 text-slate-400 border-slate-500/20' },
 ] as const;
+
+const CATEGORY_COLOR_POOL = [
+  'bg-rose-500/10 text-rose-400 border-rose-500/20',
+  'bg-amber-500/10 text-amber-400 border-amber-500/20',
+  'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+  'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
+  'bg-violet-500/10 text-violet-400 border-violet-500/20',
+  'bg-fuchsia-500/10 text-fuchsia-400 border-fuchsia-500/20',
+] as const;
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function formatDateDisplay(value?: string) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+function dateInputToIso(value?: string) {
+  if (!value) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+function calculateDueDate(item: Pick<VaultItemSummary, 'expiresAt' | 'rotationIntervalDays' | 'updatedAt' | 'createdAt'>) {
+  if (item.expiresAt) {
+    const expires = new Date(item.expiresAt);
+    if (!Number.isNaN(expires.getTime())) {
+      return expires;
+    }
+  }
+
+  if (item.rotationIntervalDays && item.rotationIntervalDays > 0) {
+    const reference = item.updatedAt || item.createdAt;
+    if (reference) {
+      const base = new Date(reference);
+      if (!Number.isNaN(base.getTime())) {
+        return new Date(base.getTime() + item.rotationIntervalDays * MS_PER_DAY);
+      }
+    }
+  }
+
+  return null;
+}
+
+function formatDayDifferenceLabel(diffDays: number) {
+  const abs = Math.abs(diffDays);
+  const plural = abs === 1 ? '' : 'en';
+
+  if (diffDays < 0) {
+    return `Abgelaufen seit ${abs} Tag${plural}`;
+  }
+  if (diffDays === 0) {
+    return 'Läuft heute ab';
+  }
+  return `Noch ${diffDays} Tag${diffDays === 1 ? '' : 'e'} gültig`;
+}
+
+function getRotationStatus(item: VaultItemSummary) {
+  const dueDate = calculateDueDate(item);
+  if (!dueDate) return null;
+
+  const diffMs = dueDate.getTime() - Date.now();
+  const diffDays = Math.floor(diffMs / MS_PER_DAY);
+
+  if (diffDays < 0) {
+    return {
+      variant: 'error' as const,
+      text: formatDayDifferenceLabel(diffDays),
+      dueDate,
+      daysRemaining: diffDays,
+    };
+  }
+
+  if (diffDays === 0) {
+    return {
+      variant: 'warning' as const,
+      text: formatDayDifferenceLabel(diffDays),
+      dueDate,
+      daysRemaining: diffDays,
+    };
+  }
+
+  if (diffDays <= 3) {
+    return {
+      variant: 'warning' as const,
+      text: formatDayDifferenceLabel(diffDays),
+      dueDate,
+      daysRemaining: diffDays,
+    };
+  }
+
+  return {
+    variant: diffDays >= 7 ? ('success' as const) : ('info' as const),
+    text: formatDayDifferenceLabel(diffDays),
+    dueDate,
+    daysRemaining: diffDays,
+  };
+}
+
+function isRecentlyUpdated(item: VaultItemSummary) {
+  if (!item.updatedAt) return false;
+  const updated = new Date(item.updatedAt);
+  if (Number.isNaN(updated.getTime())) return false;
+  return Date.now() - updated.getTime() < MS_PER_DAY;
+}
+
+function formatRelativeDaysFromNow(value?: string) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const diffDays = Math.floor((Date.now() - date.getTime()) / MS_PER_DAY);
+  if (diffDays <= 0) return 'heute';
+  if (diffDays === 1) return 'vor 1 Tag';
+  return `vor ${diffDays} Tagen`;
+}
 
 export default function GeneratorClient() {
   const { encryptionKey } = useAuth();
@@ -78,6 +199,7 @@ export default function GeneratorClient() {
   const [vaultImportUrl, setVaultImportUrl] = useState('');
   const [vaultImportNotes, setVaultImportNotes] = useState('');
   const [vaultImportCategory, setVaultImportCategory] = useState('login');
+  const [vaultImportCategoryLabel, setVaultImportCategoryLabel] = useState('Login');
   const [vaultImportExpiresAt, setVaultImportExpiresAt] = useState('');
   const [vaultImportRotationInterval, setVaultImportRotationInterval] = useState('');
   const [vaultImportStatus, setVaultImportStatus] = useState<{message: string, type: 'success' | 'error' | 'info' | 'warning'} | null>(null);
@@ -88,6 +210,9 @@ export default function GeneratorClient() {
   const [selectedVaultItemId, setSelectedVaultItemId] = useState<number | null>(null);
   const [vaultImportDefaultTitle, setVaultImportDefaultTitle] = useState('');
   const [isVaultImportFormActive, setIsVaultImportFormActive] = useState(false);
+  const [vaultCustomCategories, setVaultCustomCategories] = useState<{id: string; label: string; color: string}[]>([]);
+  const [autoComputedExpiry, setAutoComputedExpiry] = useState<string | null>(null);
+  const [expiryManuallyEdited, setExpiryManuallyEdited] = useState(false);
 
   // Helper functions for encoding/decoding
   function encodeToBase64(str: string) {
@@ -260,11 +385,18 @@ export default function GeneratorClient() {
       setVaultImportUsername(item.username || '');
       setVaultImportUrl(item.url || '');
       setVaultImportNotes(item.notes || '');
-      setVaultImportCategory(item.category || 'login');
+      const categoryId = item.category || 'login';
+      setVaultImportCategory(categoryId);
+      const categoryMatch = findCategoryById(categoryId, vaultCustomCategories);
+      const fallbackLabel = item.categoryLabel || (categoryId ? categoryId : '');
+      setVaultImportCategoryLabel(categoryMatch?.label || fallbackLabel);
       setVaultImportExpiresAt(isoToDateInput(item.expiresAt));
       setVaultImportRotationInterval(
         typeof item.rotationIntervalDays === 'number' ? String(item.rotationIntervalDays) : ''
       );
+      const hasRotation = typeof item.rotationIntervalDays === 'number' && item.rotationIntervalDays > 0;
+      setExpiryManuallyEdited(!hasRotation && Boolean(item.expiresAt));
+      setAutoComputedExpiry(null);
     } else {
       setSelectedVaultItemId(null);
       setVaultImportTitle(fallbackTitle);
@@ -272,8 +404,11 @@ export default function GeneratorClient() {
       setVaultImportUrl('');
       setVaultImportNotes('');
       setVaultImportCategory('login');
+      setVaultImportCategoryLabel('Login');
       setVaultImportExpiresAt('');
       setVaultImportRotationInterval('');
+      setExpiryManuallyEdited(false);
+      setAutoComputedExpiry(null);
     }
   }
 
@@ -293,6 +428,44 @@ export default function GeneratorClient() {
 
   function handleCreateNewVaultEntry() {
     populateVaultFormFromItem(null, vaultImportDefaultTitle || '');
+  }
+
+  function handleVaultImportExpiresAtChange(value: string) {
+    setVaultImportExpiresAt(value);
+    setExpiryManuallyEdited(true);
+  }
+
+  function handleVaultImportRotationIntervalChange(value: string) {
+    setVaultImportRotationInterval(value);
+    const normalized = normalizeRotationInterval(value);
+    if (typeof normalized === 'number' && normalized > 0) {
+      setExpiryManuallyEdited(false);
+    } else if (vaultImportExpiresAt) {
+      setExpiryManuallyEdited(true);
+    } else {
+      setExpiryManuallyEdited(false);
+    }
+  }
+
+  function handleVaultCategoryInputChange(value: string) {
+    setVaultImportCategoryLabel(value);
+    const trimmed = value.trim();
+    if (!trimmed) {
+      setVaultImportCategory('');
+      return;
+    }
+
+    const existing = findCategoryByLabel(trimmed, vaultCustomCategories);
+    if (existing) {
+      setVaultImportCategory(existing.id);
+      if (existing.label !== value) {
+        setVaultImportCategoryLabel(existing.label);
+      }
+      return;
+    }
+
+    const slug = slugifyCategory(trimmed);
+    setVaultImportCategory(slug);
   }
 
   // Speichere Daten automatisch bei Änderungen
@@ -389,6 +562,62 @@ export default function GeneratorClient() {
       void loadVaultItems();
     }
   }, [showVaultImportModal, encryptionKey]);
+
+  useEffect(() => {
+    if (!isVaultImportFormActive) {
+      setAutoComputedExpiry(null);
+      return;
+    }
+
+    const intervalInput = normalizeRotationInterval(vaultImportRotationInterval);
+    const selectedItem =
+      selectedVaultItemId !== null
+        ? availableVaultItems.find(item => item.id === selectedVaultItemId) ?? null
+        : null;
+    const intervalCandidate = (() => {
+      if (typeof intervalInput === 'number' && intervalInput > 0) return intervalInput;
+      if (
+        selectedItem &&
+        typeof selectedItem.rotationIntervalDays === 'number' &&
+        selectedItem.rotationIntervalDays > 0
+      ) {
+        return selectedItem.rotationIntervalDays;
+      }
+      return undefined;
+    })();
+
+    if (!intervalCandidate) {
+      setAutoComputedExpiry(null);
+      return;
+    }
+
+    const referenceIso = (() => {
+      if (selectedItem?.updatedAt) return selectedItem.updatedAt;
+      if (selectedItem?.createdAt) return selectedItem.createdAt;
+      return new Date().toISOString();
+    })();
+
+    const computedIso = computeNextExpiration(undefined, intervalCandidate, referenceIso);
+    if (!computedIso) {
+      setAutoComputedExpiry(null);
+      return;
+    }
+
+    const computedDate = isoToDateInput(computedIso);
+    const computedValue = computedDate || null;
+    setAutoComputedExpiry(computedValue);
+
+    if (!expiryManuallyEdited && computedValue && computedValue !== vaultImportExpiresAt) {
+      setVaultImportExpiresAt(computedDate);
+    }
+  }, [
+    isVaultImportFormActive,
+    vaultImportRotationInterval,
+    availableVaultItems,
+    selectedVaultItemId,
+    expiryManuallyEdited,
+    vaultImportExpiresAt,
+  ]);
 
   useEffect(() => {
     if (mode !== 'personal') return;
@@ -954,6 +1183,7 @@ export default function GeneratorClient() {
 
       if (res.status === 404) {
         setAvailableVaultItems([]);
+        setVaultCustomCategories([]);
         return;
       }
 
@@ -976,6 +1206,9 @@ export default function GeneratorClient() {
         parsed = JSON.parse(json || '{}');
       }
 
+      const parsedCustomCategories = Array.isArray(parsed.customCategories) ? parsed.customCategories : [];
+      setVaultCustomCategories(parsedCustomCategories);
+
       if (Array.isArray(parsed.items)) {
         const summaries: VaultItemSummary[] = parsed.items
           .map(
@@ -988,18 +1221,27 @@ export default function GeneratorClient() {
               category,
               expiresAt,
               rotationIntervalDays,
-            }: any) => ({
-              id,
-              title,
-              username,
-              url,
-              notes,
-              category,
-              expiresAt,
-              rotationIntervalDays,
-            }),
+              createdAt,
+              updatedAt,
+            }: any) => {
+              const categoryInfo = category ? findCategoryById(category, parsedCustomCategories) : undefined;
+              return {
+                id,
+                title,
+                username,
+                url,
+                notes,
+                category,
+                categoryLabel: categoryInfo?.label,
+                categoryColor: categoryInfo?.color,
+                expiresAt,
+                rotationIntervalDays,
+                createdAt,
+                updatedAt,
+              };
+            },
           )
-          .sort((a, b) => a.title.localeCompare(b.title, 'de'));
+          .sort((a: VaultItemSummary, b: VaultItemSummary) => a.title.localeCompare(b.title, 'de'));
         setAvailableVaultItems(summaries);
       } else {
         setAvailableVaultItems([]);
@@ -1008,6 +1250,7 @@ export default function GeneratorClient() {
       console.error('Fehler beim Laden der Vault-Items:', error);
       setVaultItemsError('Vault-Einträge konnten nicht geladen werden.');
       setAvailableVaultItems([]);
+      setVaultCustomCategories([]);
     } finally {
       setIsLoadingVaultItems(false);
     }
@@ -1021,7 +1264,7 @@ export default function GeneratorClient() {
 
     try {
       // Lade aktuelle Vault-Daten vom Server
-      let currentVaultData = { items: [], customCategories: [] };
+      let currentVaultData: any = { items: [], customCategories: [] };
       const vaultRes = await fetch('/backend/api/v1/vault', {
         cache: 'no-store',
         credentials: 'include',
@@ -1051,33 +1294,71 @@ export default function GeneratorClient() {
       }
 
       const nowIso = new Date().toISOString();
-      const intervalDays = normalizeRotationInterval(vaultImportRotationInterval);
-      const explicitExpiresIso = (() => {
-        if (!vaultImportExpiresAt) return undefined;
-        const date = new Date(vaultImportExpiresAt);
-        return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
-      })();
-      const effectiveExpiresAt = computeNextExpiration(explicitExpiresIso, intervalDays, nowIso);
       const historyEntry = { value: password, changedAt: nowIso };
+      const existingCustomCategories: { id: string; label: string; color: string }[] =
+        Array.isArray(currentVaultData.customCategories) ? [...currentVaultData.customCategories] : [];
+      const trimmedCategoryLabel = vaultImportCategoryLabel.trim();
+      let categoryIdForSave = '';
 
-      const items = Array.isArray(currentVaultData.items) ? [...currentVaultData.items] : [];
+      if (trimmedCategoryLabel) {
+        const existingCategory = findCategoryByLabel(trimmedCategoryLabel, existingCustomCategories);
+        if (existingCategory) {
+          categoryIdForSave = existingCategory.id;
+          if (existingCategory.label !== vaultImportCategoryLabel) {
+            setVaultImportCategoryLabel(existingCategory.label);
+          }
+        } else {
+          categoryIdForSave = slugifyCategory(trimmedCategoryLabel);
+          const newCategory = {
+            id: categoryIdForSave,
+            label: trimmedCategoryLabel,
+            color: getColorForCategory(trimmedCategoryLabel),
+          };
+          existingCustomCategories.push(newCategory);
+        }
+      }
+
+      setVaultImportCategory(categoryIdForSave || '');
+      if (trimmedCategoryLabel !== vaultImportCategoryLabel) {
+        setVaultImportCategoryLabel(trimmedCategoryLabel);
+      }
+      currentVaultData.customCategories = existingCustomCategories;
+      setVaultCustomCategories(existingCustomCategories);
+
+      const items: any[] = Array.isArray(currentVaultData.items) ? [...currentVaultData.items] : [];
       const existingIndex = items.findIndex(item => item.title === vaultImportTitle);
       let successMessage = 'Passwort erfolgreich zum Vault hinzugefügt!';
+      let successType: 'success' | 'info' = 'success';
 
       if (existingIndex >= 0) {
         const existing = items[existingIndex];
         const history = existing.passwordHistory ? [...existing.passwordHistory] : [];
-        if (history.length === 0) {
+        if (history.length === 0 && existing.password) {
           history.push({
             value: existing.password,
             changedAt: existing.updatedAt || existing.createdAt || nowIso,
           });
         }
-        if (existing.password !== password) {
+
+        const intervalInput = normalizeRotationInterval(vaultImportRotationInterval);
+        const intervalCandidate = intervalInput ?? existing.rotationIntervalDays;
+        const effectiveInterval =
+          typeof intervalCandidate === 'number' && intervalCandidate > 0 ? intervalCandidate : undefined;
+        const passwordChanged = existing.password !== password;
+        const autoReferenceIso =
+          passwordChanged ? nowIso : existing.updatedAt || existing.createdAt || nowIso;
+        const manualExpiryIso =
+          (expiryManuallyEdited || !effectiveInterval) ? dateInputToIso(vaultImportExpiresAt) : undefined;
+        const effectiveExpiresAt = computeNextExpiration(
+          manualExpiryIso,
+          effectiveInterval,
+          autoReferenceIso,
+        );
+
+        if (passwordChanged) {
           history.push(historyEntry);
         }
-        const nextRotationInterval = intervalDays ?? existing.rotationIntervalDays;
-        const nextExpiresAt = effectiveExpiresAt ?? existing.expiresAt;
+
         items[existingIndex] = {
           ...existing,
           title: vaultImportTitle,
@@ -1085,14 +1366,30 @@ export default function GeneratorClient() {
           password,
           url: vaultImportUrl || existing.url,
           notes: vaultImportNotes || existing.notes,
-          category: vaultImportCategory || existing.category,
-          expiresAt: nextExpiresAt,
-          rotationIntervalDays: nextRotationInterval,
+          category: categoryIdForSave || existing.category,
+          expiresAt: effectiveExpiresAt ?? existing.expiresAt,
+          rotationIntervalDays: effectiveInterval,
           passwordHistory: history,
-          updatedAt: nowIso,
+          updatedAt: passwordChanged ? nowIso : existing.updatedAt || existing.createdAt || nowIso,
         };
-        successMessage = 'Passwort im Vault aktualisiert!';
+        if (passwordChanged) {
+          successMessage = 'Passwort im Vault aktualisiert!';
+        } else {
+          successMessage = 'Eintrag gespeichert (Passwort unverändert)';
+          successType = 'info';
+        }
       } else {
+        const intervalInput = normalizeRotationInterval(vaultImportRotationInterval);
+        const effectiveInterval =
+          typeof intervalInput === 'number' && intervalInput > 0 ? intervalInput : undefined;
+        const manualExpiryIso =
+          (expiryManuallyEdited || !effectiveInterval) ? dateInputToIso(vaultImportExpiresAt) : undefined;
+        const effectiveExpiresAt = computeNextExpiration(
+          manualExpiryIso,
+          effectiveInterval,
+          nowIso,
+        );
+
         items.push({
           id: Date.now(),
           title: vaultImportTitle,
@@ -1100,10 +1397,11 @@ export default function GeneratorClient() {
           password,
           url: vaultImportUrl || undefined,
           notes: vaultImportNotes || undefined,
-          category: vaultImportCategory,
+          category: categoryIdForSave || undefined,
           createdAt: nowIso,
+          updatedAt: nowIso,
           expiresAt: effectiveExpiresAt,
-          rotationIntervalDays: intervalDays,
+          rotationIntervalDays: effectiveInterval,
           passwordHistory: [historyEntry],
         });
       }
@@ -1124,18 +1422,27 @@ export default function GeneratorClient() {
               category,
               expiresAt,
               rotationIntervalDays,
-            }: any) => ({
-              id,
-              title,
-              username,
-              url,
-              notes,
-              category,
-              expiresAt,
-              rotationIntervalDays,
-            }),
+              createdAt,
+              updatedAt,
+            }: any) => {
+              const categoryInfo = category ? findCategoryById(category, existingCustomCategories) : undefined;
+              return {
+                id,
+                title,
+                username,
+                url,
+                notes,
+                category,
+                categoryLabel: categoryInfo?.label,
+                categoryColor: categoryInfo?.color,
+                expiresAt,
+                rotationIntervalDays,
+                createdAt,
+                updatedAt,
+              };
+            },
           )
-          .sort((a, b) => a.title.localeCompare(b.title, 'de')),
+          .sort((a: VaultItemSummary, b: VaultItemSummary) => a.title.localeCompare(b.title, 'de')),
       );
 
       // Verschlüssele und speichere die aktualisierten Daten
@@ -1157,23 +1464,26 @@ export default function GeneratorClient() {
         throw new Error(`Fehler beim Speichern: ${saveRes.status}`);
       }
 
-      setVaultImportStatus({ message: successMessage, type: 'success' });
+      setVaultImportStatus({ message: successMessage, type: successType });
       
       // Setze das Formular nach erfolgreichem Speichern
       setTimeout(() => {
         setShowVaultImportModal(false);
         setVaultImportTitle('');
         setVaultImportUsername('');
-        setVaultImportUrl('');
-        setVaultImportNotes('');
+      setVaultImportUrl('');
+      setVaultImportNotes('');
       setVaultImportCategory('login');
+      setVaultImportCategoryLabel('Login');
       setVaultImportExpiresAt('');
       setVaultImportRotationInterval('');
       setVaultImportStatus(null);
       setSelectedVaultItemId(null);
       setVaultImportDefaultTitle('');
-      setIsVaultImportFormActive(false);
-    }, 1500);
+        setIsVaultImportFormActive(false);
+        setExpiryManuallyEdited(false);
+        setAutoComputedExpiry(null);
+      }, 1500);
     } catch (error) {
       console.error('Fehler beim Speichern im Vault:', error);
       setVaultImportStatus({ 
@@ -1188,6 +1498,9 @@ export default function GeneratorClient() {
     setIsVaultImportFormActive(false);
     setSelectedVaultItemId(null);
     setVaultImportStatus(null);
+    setAutoComputedExpiry(null);
+    setExpiryManuallyEdited(false);
+    setVaultImportCategoryLabel('Login');
   }
 
   function openVaultImportModal() {
@@ -1207,9 +1520,12 @@ export default function GeneratorClient() {
     setVaultImportUrl('');
     setVaultImportNotes('');
     setVaultImportCategory('login');
+    setVaultImportCategoryLabel('Login');
     setVaultImportExpiresAt('');
     setVaultImportRotationInterval('');
     setVaultImportStatus(null);
+    setExpiryManuallyEdited(false);
+    setAutoComputedExpiry(null);
     setShowVaultImportModal(true);
     void loadVaultItems();
   }
@@ -1357,6 +1673,70 @@ export default function GeneratorClient() {
     if (score >= 3) return { text: 'Mittel', variant: 'warning' as const, color: 'bg-orange-500', width: 50 };
     return { text: 'Schwach', variant: 'error' as const, color: 'bg-red-500', width: 25 };
   }
+
+  const selectedVaultItem = useMemo(
+    () =>
+      selectedVaultItemId !== null
+        ? availableVaultItems.find(item => item.id === selectedVaultItemId) ?? null
+        : null,
+    [availableVaultItems, selectedVaultItemId],
+  );
+
+  const selectedVaultStatus = useMemo(
+    () => (selectedVaultItem ? getRotationStatus(selectedVaultItem) : null),
+    [selectedVaultItem],
+  );
+  const selectedVaultRecentlyUpdated = useMemo(
+    () => (selectedVaultItem ? isRecentlyUpdated(selectedVaultItem) : false),
+    [selectedVaultItem],
+  );
+
+  const activeRotationInterval =
+    normalizeRotationInterval(vaultImportRotationInterval) ??
+    (selectedVaultItem?.rotationIntervalDays && selectedVaultItem.rotationIntervalDays > 0
+      ? selectedVaultItem.rotationIntervalDays
+      : undefined);
+
+  const upcomingExpiryInfo = useMemo(() => {
+    if (selectedVaultStatus?.dueDate) {
+      return {
+        dateIso: selectedVaultStatus.dueDate.toISOString(),
+        label: selectedVaultStatus.text,
+        variant: selectedVaultStatus.variant,
+        source: 'existing' as const,
+        daysRemaining: selectedVaultStatus.daysRemaining,
+      };
+    }
+
+    const manualDateIso =
+      expiryManuallyEdited && vaultImportExpiresAt ? dateInputToIso(vaultImportExpiresAt) : undefined;
+
+    const candidateIso = manualDateIso ?? (autoComputedExpiry ? dateInputToIso(autoComputedExpiry) : undefined);
+    if (!candidateIso) return null;
+
+    const candidate = new Date(candidateIso);
+    if (Number.isNaN(candidate.getTime())) return null;
+
+    const diffDays = Math.floor((candidate.getTime() - Date.now()) / MS_PER_DAY);
+    const variant = diffDays < 0 ? ('error' as const)
+      : diffDays === 0 ? ('warning' as const)
+      : diffDays <= 3 ? ('warning' as const)
+      : diffDays >= 7 ? ('success' as const)
+      : ('info' as const);
+
+    return {
+      dateIso: candidate.toISOString(),
+      label: formatDayDifferenceLabel(diffDays),
+      variant,
+      source: manualDateIso ? ('manual' as const) : ('auto' as const),
+      daysRemaining: diffDays,
+    };
+  }, [
+    selectedVaultStatus,
+    expiryManuallyEdited,
+    vaultImportExpiresAt,
+    autoComputedExpiry,
+  ]);
 
   const strength = getPasswordStrength();
 
@@ -1942,6 +2322,31 @@ export default function GeneratorClient() {
                       )}
                     </div>
                   )}
+                  {upcomingExpiryInfo && (
+                    <div className="mt-4 bg-slate-800/70 border border-slate-700 rounded-lg p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <Badge variant={upcomingExpiryInfo.variant}>{upcomingExpiryInfo.label}</Badge>
+                        <span className="text-sm text-slate-200 font-medium">
+                          Nächstes Ablaufdatum:{' '}
+                          <span className="text-slate-100">
+                            {formatDateDisplay(upcomingExpiryInfo.dateIso)}
+                          </span>
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        {upcomingExpiryInfo.source === 'existing'
+                          ? 'Basierend auf dem gespeicherten Vault-Eintrag.'
+                          : upcomingExpiryInfo.source === 'auto'
+                            ? 'Vorläufig berechnet aus dem Rotationsintervall.'
+                            : 'Basierend auf dem eingegebenen Ablaufdatum.'}
+                      </p>
+                      {upcomingExpiryInfo.daysRemaining < 0 && (
+                        <p className="text-xs text-red-300">
+                          Bitte ein neues Passwort generieren und anschließend im Vault sichern.
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -2251,28 +2656,63 @@ export default function GeneratorClient() {
                   )}
                   {!isLoadingVaultItems && !vaultItemsError && availableVaultItems.length > 0 && (
                     <div className="max-h-40 overflow-y-auto space-y-1">
-                      {availableVaultItems.map(item => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => handleSelectVaultItem(item)}
-                          className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-colors ${
-                            selectedVaultItemId === item.id
-                              ? 'border-indigo-500 bg-indigo-500/10 text-indigo-200'
-                              : 'border-slate-700 bg-slate-800/40 text-slate-300 hover:border-slate-600 hover:bg-slate-800/60'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="font-medium">{item.title}</span>
-                            {item.username && (
-                              <span className="text-xs text-slate-400 truncate">{item.username}</span>
+                      {availableVaultItems.map((item: VaultItemSummary) => {
+                        const status = getRotationStatus(item);
+                        const showNew = isRecentlyUpdated(item);
+                        const dueLabel = status?.dueDate ? formatDateDisplay(status.dueDate.toISOString()) : '';
+                        const lastChangeIso = item.updatedAt || item.createdAt;
+                        const lastChangeLabel = formatDateDisplay(lastChangeIso);
+                        const lastChangeRelative = formatRelativeDaysFromNow(lastChangeIso);
+
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => handleSelectVaultItem(item)}
+                            className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-colors ${
+                              selectedVaultItemId === item.id
+                                ? 'border-indigo-500 bg-indigo-500/10 text-indigo-200'
+                                : 'border-slate-700 bg-slate-800/40 text-slate-300 hover:border-slate-600 hover:bg-slate-800/60'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <span className="block font-medium truncate">{item.title}</span>
+                                {item.username && (
+                                  <span className="text-[11px] text-slate-400 truncate block mt-0.5">
+                                    {item.username}
+                                  </span>
+                                )}
+                                {item.categoryLabel && (
+                                  <span
+                                    className={`mt-1 inline-flex px-2 py-0.5 rounded text-[11px] ${
+                                      item.categoryColor || 'bg-slate-800/50 text-slate-300 border border-slate-700'
+                                    }`}
+                                  >
+                                    {item.categoryLabel}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                {showNew && <Badge variant="success">Neu</Badge>}
+                                {status && <Badge variant={status.variant}>{status.text}</Badge>}
+                              </div>
+                            </div>
+                            {item.url && (
+                              <p className="text-xs text-slate-500 truncate mt-1">{item.url}</p>
                             )}
-                          </div>
-                          {item.url && (
-                            <p className="text-xs text-slate-500 truncate">{item.url}</p>
-                          )}
-                        </button>
-                      ))}
+                            {dueLabel && (
+                              <p className="text-[11px] text-slate-500 mt-1">Ablauf: {dueLabel}</p>
+                            )}
+                            {lastChangeLabel && (
+                              <p className="text-[11px] text-slate-600 mt-0.5">
+                                Zuletzt geändert: {lastChangeLabel}
+                                {lastChangeRelative && ` (${lastChangeRelative})`}
+                              </p>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -2293,7 +2733,7 @@ export default function GeneratorClient() {
                         required
                       />
                       <datalist id="vault-titles">
-                        {availableVaultItems.map(item => (
+                        {availableVaultItems.map((item: VaultItemSummary) => (
                           <option key={item.id} value={item.title} />
                         ))}
                       </datalist>
@@ -2323,7 +2763,7 @@ export default function GeneratorClient() {
                           label="Ablaufdatum"
                           type="date"
                           value={vaultImportExpiresAt}
-                          onChange={e => setVaultImportExpiresAt(e.target.value)}
+                          onChange={e => handleVaultImportExpiresAtChange(e.target.value)}
                           helperText="Optional: Nach diesem Datum sollte ein neues Passwort erstellt werden"
                         />
                         <Input
@@ -2331,9 +2771,95 @@ export default function GeneratorClient() {
                           type="number"
                           min={0}
                           value={vaultImportRotationInterval}
-                          onChange={e => setVaultImportRotationInterval(e.target.value)}
+                          onChange={e => handleVaultImportRotationIntervalChange(e.target.value)}
                           helperText="Optional: Automatisch nach X Tagen erneut generieren. 0 deaktiviert."
                         />
+                        {autoComputedExpiry && (
+                          <div className="text-xs text-indigo-200/90 bg-indigo-500/5 border border-indigo-500/20 rounded-md px-3 py-2 leading-relaxed">
+                            <p>
+                              Automatisches Ablaufdatum:{' '}
+                              <span className="font-semibold text-indigo-200">
+                                {formatDateDisplay(autoComputedExpiry)}
+                              </span>
+                            </p>
+                            <p className="text-[11px] text-indigo-200/70 mt-1">
+                              {expiryManuallyEdited
+                                ? 'Manuell überschrieben – gespeicherter Wert wird verwendet.'
+                                : activeRotationInterval
+                                  ? `Wird beim Speichern automatisch auf Basis von ${activeRotationInterval} Tag${activeRotationInterval === 1 ? '' : 'en'} aktualisiert.`
+                                  : 'Wird beim Speichern anhand des Rotationsintervalls aktualisiert.'}
+                            </p>
+                          </div>
+                        )}
+                        {!autoComputedExpiry && selectedVaultItem?.expiresAt && !vaultImportRotationInterval && (
+                          <p className="text-xs text-slate-400">
+                            Aktuelles Ablaufdatum: {formatDateDisplay(selectedVaultItem.expiresAt)}
+                          </p>
+                        )}
+                        {selectedVaultItem && (
+                          <div className="text-xs space-y-2 bg-slate-900/40 border border-slate-700/60 rounded-md px-3 py-3">
+                            {selectedVaultStatus ? (
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <Badge variant={selectedVaultStatus.variant}>{selectedVaultStatus.text}</Badge>
+                                  {selectedVaultStatus.dueDate && (
+                                    <span className="text-slate-300">
+                                      Nächstes Ablaufdatum:{' '}
+                                      <span className="font-semibold text-slate-100">
+                                        {formatDateDisplay(selectedVaultStatus.dueDate.toISOString())}
+                                      </span>
+                                    </span>
+                                  )}
+                                </div>
+                                {selectedVaultStatus.daysRemaining < 0 ? (
+                                  <p className="text-red-300">
+                                    Bitte ein neues Passwort generieren und sichern.
+                                  </p>
+                                ) : (
+                                  <p className="text-slate-400">
+                                    Das aktuelle Passwort bleibt bis zu diesem Datum gültig.
+                                  </p>
+                                )}
+                              </div>
+                            ) : (
+                              <p className="text-slate-400">
+                                Keine automatische Erinnerung aktiv. Setze optional Ablaufdatum oder Rotationsintervall.
+                              </p>
+                            )}
+                            {selectedVaultItem.updatedAt && (
+                              <p className="text-slate-500">
+                                Zuletzt geändert:{' '}
+                                <span className="text-slate-300">
+                                  {formatDateDisplay(selectedVaultItem.updatedAt)} (
+                                  {formatRelativeDaysFromNow(selectedVaultItem.updatedAt)})
+                                </span>
+                              </p>
+                            )}
+                            {selectedVaultRecentlyUpdated && (
+                              <p className="text-emerald-300">
+                                Gerade aktualisiert – keine Erinnerung erforderlich.
+                              </p>
+                            )}
+                          </div>
+                        )}
+                        {upcomingExpiryInfo && (
+                          <div className="text-xs bg-slate-800/60 border border-slate-700 rounded-md px-3 py-2 space-y-1">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <span className="text-slate-300 font-medium">
+                                Nächstes Ablaufdatum:
+                              </span>
+                              <Badge variant={upcomingExpiryInfo.variant}>{upcomingExpiryInfo.label}</Badge>
+                            </div>
+                            <p className="text-slate-200">
+                              <span className="font-semibold">
+                                {formatDateDisplay(upcomingExpiryInfo.dateIso)}
+                              </span>
+                              {upcomingExpiryInfo.source === 'existing' && ' (gespeicherter Wert)'}
+                              {upcomingExpiryInfo.source === 'auto' && ' (berechnet aus Rotationsintervall)'}
+                              {upcomingExpiryInfo.source === 'manual' && ' (manuell gesetzt)'}
+                            </p>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -2343,23 +2869,18 @@ export default function GeneratorClient() {
                         Metadaten
                       </h4>
                       <div className="space-y-2">
-                        <label className="text-sm font-medium text-slate-300 block">Kategorie</label>
-                        <div className="flex flex-wrap gap-2">
-                          {CATEGORIES.map(category => (
-                            <button
-                              key={category.id}
-                              type="button"
-                              onClick={() => setVaultImportCategory(category.id)}
-                              className={`px-3 py-1.5 rounded-lg border text-sm transition-colors ${
-                                vaultImportCategory === category.id
-                                  ? `${category.color} ring-2 ring-offset-2 ring-offset-slate-900 ring-slate-500`
-                                  : 'bg-slate-800/50 text-slate-400 border-slate-700 hover:bg-slate-700/50'
-                              }`}
-                            >
-                              {category.label}
-                            </button>
+                        <Input
+                          label="Kategorie"
+                          value={vaultImportCategoryLabel}
+                          onChange={e => handleVaultCategoryInputChange(e.target.value)}
+                          placeholder="z. B. Login, Banking, Social Media"
+                          list="generator-category-options"
+                        />
+                        <datalist id="generator-category-options">
+                          {getAllCategories(vaultCustomCategories).map(category => (
+                            <option key={category.id} value={category.label} />
                           ))}
-                        </div>
+                        </datalist>
                       </div>
                       <Input
                         label="Notizen"
@@ -2403,4 +2924,40 @@ export default function GeneratorClient() {
       </div>
     </AppShell>
   );
+}
+function slugifyCategory(label: string) {
+  return label
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    || 'custom';
+}
+
+function getColorForCategory(label: string) {
+  const normalized = slugifyCategory(label);
+  const hash = Array.from(normalized).reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  return CATEGORY_COLOR_POOL[hash % CATEGORY_COLOR_POOL.length];
+}
+
+function getAllCategories(customCategories: { id: string; label: string; color: string }[] = []) {
+  return [...CATEGORIES, ...customCategories];
+}
+
+function findCategoryByLabel(
+  label: string,
+  customCategories: { id: string; label: string; color: string }[] = [],
+) {
+  const normalized = label.trim().toLowerCase();
+  if (!normalized) return undefined;
+  return getAllCategories(customCategories).find(
+    category => category.label.trim().toLowerCase() === normalized,
+  );
+}
+
+function findCategoryById(
+  id: string,
+  customCategories: { id: string; label: string; color: string }[] = [],
+) {
+  return getAllCategories(customCategories).find(category => category.id === id);
 }

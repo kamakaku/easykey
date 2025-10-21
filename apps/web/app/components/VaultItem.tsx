@@ -2,6 +2,8 @@
 
 import { Badge } from './UI';
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 interface VaultItemProps {
   item: {
     id: number;
@@ -14,25 +16,66 @@ interface VaultItemProps {
     createdAt: string;
     updatedAt?: string;
     expiresAt?: string;
+    rotationIntervalDays?: number;
     passwordHistory?: { value: string; changedAt: string }[];
   };
   onClick: (item: any) => void;
 }
 
-function getExpirationMeta(expiresAt?: string) {
-  if (!expiresAt) return null;
-  const expiry = new Date(expiresAt);
-  if (Number.isNaN(expiry.getTime())) return null;
+function computeDueDate(item: VaultItemProps['item']) {
+  if (item.expiresAt) {
+    const expiry = new Date(item.expiresAt);
+    if (!Number.isNaN(expiry.getTime())) {
+      return expiry;
+    }
+  }
+  if (item.rotationIntervalDays && item.rotationIntervalDays > 0) {
+    const reference = item.updatedAt || item.createdAt;
+    if (reference) {
+      const base = new Date(reference);
+      if (!Number.isNaN(base.getTime())) {
+        return new Date(base.getTime() + item.rotationIntervalDays * MS_PER_DAY);
+      }
+    }
+  }
+  return null;
+}
+
+function getExpirationMeta(item: VaultItemProps['item']) {
+  const expiry = computeDueDate(item);
+  if (!expiry || Number.isNaN(expiry.getTime())) return null;
   const diffMs = expiry.getTime() - Date.now();
-  const daysLeft = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+  const diffDays = Math.floor(diffMs / MS_PER_DAY);
+  const abs = Math.abs(diffDays);
+  const plural = abs === 1 ? '' : 'en';
+
+  let variant: 'success' | 'warning' | 'error' | 'info' = 'info';
+  let text: string;
+
+  if (diffDays < 0) {
+    variant = 'error';
+    text = `Abgelaufen seit ${abs} Tag${plural}`;
+  } else if (diffDays === 0) {
+    variant = 'warning';
+    text = 'Läuft heute ab';
+  } else if (diffDays <= 3) {
+    variant = 'warning';
+    text = `Noch ${diffDays} Tag${diffDays === 1 ? '' : 'e'} gültig`;
+  } else {
+    variant = diffDays >= 7 ? 'success' : 'info';
+    text = `Noch ${diffDays} Tag${diffDays === 1 ? '' : 'e'} gültig`;
+  }
+
   return {
-    isExpired: diffMs < 0,
-    daysLeft,
+    dueDate: expiry,
+    diffDays,
+    text,
+    variant,
   };
 }
 
 export default function VaultItem({ item, onClick }: VaultItemProps) {
-  const expirationMeta = getExpirationMeta(item.expiresAt);
+  const expirationMeta = getExpirationMeta(item);
 
   return (
     <div
@@ -74,21 +117,7 @@ export default function VaultItem({ item, onClick }: VaultItemProps) {
             </span>
           )}
           {expirationMeta && (
-            <Badge
-              variant={
-                expirationMeta.isExpired
-                  ? 'error'
-                  : expirationMeta.daysLeft <= 7
-                    ? 'warning'
-                    : 'success'
-              }
-            >
-              {expirationMeta.isExpired
-                ? 'Abgelaufen'
-                : expirationMeta.daysLeft <= 0
-                  ? 'Läuft heute ab'
-                  : `Noch ${expirationMeta.daysLeft} ${expirationMeta.daysLeft === 1 ? 'Tag' : 'Tage'}`}
-            </Badge>
+            <Badge variant={expirationMeta.variant}>{expirationMeta.text}</Badge>
           )}
         </div>
         {item.username && (

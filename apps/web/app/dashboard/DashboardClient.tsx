@@ -19,10 +19,17 @@ function decodeFromBase64(b64: string) {
   }
 }
 
+type VaultItemSummary = {
+  id: number;
+  title: string;
+  expiresAt?: string;
+};
+
 export default function DashboardClient() {
   const { userId, encryptionKey } = useAuth();
   const [vaultCount, setVaultCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
+  const [expiredVaultItems, setExpiredVaultItems] = useState<VaultItemSummary[]>([]);
 
   useEffect(() => {
     async function loadVaultStats() {
@@ -39,6 +46,7 @@ export default function DashboardClient() {
 
         if (res.status === 404) {
           setVaultCount(0);
+          setExpiredVaultItems([]);
           return;
         }
 
@@ -63,9 +71,25 @@ export default function DashboardClient() {
         const parsed = JSON.parse(json || '{}');
         const items = Array.isArray(parsed.items) ? parsed.items : [];
         setVaultCount(items.length);
+
+        const now = Date.now();
+        const expired = items
+          .filter((item: any) => item?.expiresAt)
+          .filter((item: any) => {
+            const time = new Date(item.expiresAt).getTime();
+            return Number.isFinite(time) && time <= now;
+          })
+          .map((item: any) => ({
+            id: item.id,
+            title: item.title,
+            expiresAt: item.expiresAt,
+          }));
+
+        setExpiredVaultItems(expired);
       } catch (error) {
         console.error('Failed to load vault stats:', error);
         setVaultCount(0);
+        setExpiredVaultItems([]);
       } finally {
         setLoading(false);
       }
@@ -90,6 +114,43 @@ export default function DashboardClient() {
             <p className="text-sm opacity-90">Deine Session ist aktiv und alle Daten sind sicher verschlüsselt.</p>
           </div>
         </Alert>
+
+        {/* Expired Passwords */}
+        {!loading && expiredVaultItems.length > 0 && (
+          <Card className="border border-red-500/40 bg-red-500/5">
+            <h3 className="text-lg font-semibold text-red-300 mb-3">Abgelaufene Passwörter</h3>
+            <p className="text-sm text-red-200 mb-3">
+              Diese Einträge sind abgelaufen und sollten aktualisiert werden:
+            </p>
+            <div className="space-y-2">
+              {expiredVaultItems.slice(0, 5).map(item => (
+                <a
+                  key={item.id}
+                  href="/vault"
+                  className="flex items-center justify-between gap-4 px-4 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-lg transition-colors"
+                >
+                  <div>
+                    <p className="font-medium text-red-100">{item.title}</p>
+                    <p className="text-xs text-red-200">
+                      Abgelaufen am{' '}
+                      {item.expiresAt
+                        ? new Date(item.expiresAt).toLocaleDateString('de-DE', {
+                            year: 'numeric',
+                            month: 'short',
+                            day: 'numeric',
+                          })
+                        : 'Unbekannt'}
+                    </p>
+                  </div>
+                  <Badge variant="error">Jetzt anpassen</Badge>
+                </a>
+              ))}
+              {expiredVaultItems.length > 5 && (
+                <p className="text-xs text-red-200">+{expiredVaultItems.length - 5} weitere</p>
+              )}
+            </div>
+          </Card>
+        )}
 
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

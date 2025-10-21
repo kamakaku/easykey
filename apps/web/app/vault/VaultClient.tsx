@@ -74,13 +74,50 @@ const CATEGORIES = [
   { id: 'other', label: 'Sonstige', color: 'bg-slate-500/10 text-slate-400 border-slate-500/20' },
 ] as const;
 
+const CATEGORY_COLOR_POOL = [
+  'bg-rose-500/10 text-rose-400 border-rose-500/20',
+  'bg-amber-500/10 text-amber-400 border-amber-500/20',
+  'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+  'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
+  'bg-violet-500/10 text-violet-400 border-violet-500/20',
+  'bg-fuchsia-500/10 text-fuchsia-400 border-fuchsia-500/20',
+] as const;
+
+function slugifyCategory(label: string) {
+  return label
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    || 'custom';
+}
+
+function getColorForCategory(label: string) {
+  const normalized = slugifyCategory(label);
+  const hash = Array.from(normalized).reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  return CATEGORY_COLOR_POOL[hash % CATEGORY_COLOR_POOL.length];
+}
+
+function getAllCategories(custom: { id: string; label: string; color: string }[] = []) {
+  return [...CATEGORIES, ...custom];
+}
+
+function findCategoryByLabel(label: string, custom: { id: string; label: string; color: string }[] = []) {
+  const normalized = label.trim().toLowerCase();
+  if (!normalized) return undefined;
+  return getAllCategories(custom).find(cat => cat.label.trim().toLowerCase() === normalized);
+}
+
+function findCategoryById(id: string, custom: { id: string; label: string; color: string }[] = []) {
+  return getAllCategories(custom).find(cat => cat.id === id);
+}
+
 
 
 export default function VaultClient() {
   const { encryptionKey } = useAuth();
   const [pending, setPending] = useState<GenStash | null>(null);
   const [items, setItems] = useState<VaultItemType[]>([]);
-  const [vaultCustomCategories, setVaultCustomCategories] = useState<{id: string, label: string, color: string}[]>([]);
   const [pendingSaveAt, setPendingSaveAt] = useState<number | null>(null);
   const [hasPendingSave, setHasPendingSave] = useState(false);
   const [status, setStatus] = useState<string>('');
@@ -114,6 +151,7 @@ export default function VaultClient() {
   const [formUrl, setFormUrl] = useState('');
   const [formNotes, setFormNotes] = useState('');
   const [formCategory, setFormCategory] = useState<string>('');
+  const [formCategoryLabel, setFormCategoryLabel] = useState<string>('');
   const [formExpiresAt, setFormExpiresAt] = useState<string>('');
   const [formRotationInterval, setFormRotationInterval] = useState<string>('');
   const originalPasswordRef = useRef<string>('');
@@ -121,8 +159,6 @@ export default function VaultClient() {
   // Zustand für Kategorien
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
   const [customCategories, setCustomCategories] = useState<{id: string, label: string, color: string}[]>([]);
-  const [showAddCategory, setShowAddCategory] = useState(false);
-  const [newCategoryName, setNewCategoryName] = useState('');
 
   const expirationInfo = viewingItem ? getExpirationMeta(viewingItem.expiresAt) : null;
   const categoryInfo = viewingItem?.category ? getCategoryInfo(viewingItem.category) : null;
@@ -172,9 +208,29 @@ export default function VaultClient() {
     return next.toISOString();
   }
 
+  function handleCategoryInputChange(value: string) {
+    setFormCategoryLabel(value);
+    const trimmed = value.trim();
+    if (!trimmed) {
+      setFormCategory('');
+      return;
+    }
+
+    const existing = findCategoryByLabel(trimmed, customCategories);
+    if (existing) {
+      setFormCategory(existing.id);
+      if (existing.label !== value) {
+        setFormCategoryLabel(existing.label);
+      }
+      return;
+    }
+
+    const slug = slugifyCategory(trimmed);
+    setFormCategory(slug);
+  }
+
   function derivePasswordFromExisting() {
     const base = formPassword || originalPasswordRef.current;
-    const fallbackCharset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%&*';
 
     const randomChar = (charset: string) => {
       if (typeof window !== 'undefined' && window.crypto?.getRandomValues) {
@@ -188,35 +244,36 @@ export default function VaultClient() {
     const mutate = (value: string) => {
       if (!value) {
         let generated = '';
-        for (let i = 0; i < 16; i++) {
-          generated += randomChar(fallbackCharset);
+        const fallback = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        for (let i = 0; i < 12; i++) {
+          generated += randomChar(fallback);
         }
         return generated;
       }
 
-      const substitutions: Record<string, string> = {
-        'a': '4',
-        'e': '3',
-        'i': '1',
-        'o': '0',
-        's': '5',
-        'g': '9'
-      };
+      let chars = value.split('');
+      if (chars.length >= 2) {
+        const indexToFlip = Math.max(0, chars.length - 3);
+        const char = chars[indexToFlip];
+        chars[indexToFlip] = char === char.toLowerCase() ? char.toUpperCase() : char.toLowerCase();
+      }
 
-      const rotated = value.length > 2 ? value.slice(1) + value[0] : value.split('').reverse().join('');
-      const replaced = rotated
-        .split('')
-        .map((char, index) => {
-          const lower = char.toLowerCase();
-          if (substitutions[lower] && index % 3 === 0) {
-            return substitutions[lower];
+      if (/\d/.test(value)) {
+        for (let i = 0; i < chars.length; i++) {
+          if (/[0-9]/.test(chars[i])) {
+            chars[i] = ((Number(chars[i]) + 1) % 10).toString();
+            break;
           }
-          return index % 2 === 0 ? char.toUpperCase() : char.toLowerCase();
-        })
-        .join('');
+        }
+      } else {
+        chars.push(randomChar('0123456789'));
+      }
 
-      const suffix = `${randomChar('!@#')}${randomChar('0123456789')}`;
-      return `${replaced}${suffix}`;
+      if (!/[!@#$%^&*\-_]/.test(value)) {
+        chars.push(randomChar('!@#$%^&*-_'));
+      }
+
+      return chars.join('');
     };
 
     const newPassword = mutate(base);
@@ -390,6 +447,7 @@ export default function VaultClient() {
     setFormUrl('');
     setFormNotes('');
     setFormCategory('login'); // Standardkategorie
+    setFormCategoryLabel('Login');
     setFormExpiresAt('');
     setFormRotationInterval('');
     originalPasswordRef.current = '';
@@ -404,7 +462,10 @@ export default function VaultClient() {
     setFormPassword(item.password);
     setFormUrl(item.url || '');
     setFormNotes(item.notes || '');
-    setFormCategory(item.category || 'login');
+    const categoryId = item.category || 'login';
+    setFormCategory(categoryId);
+    const categoryInfo = categoryId ? getCategoryInfo(categoryId) : null;
+    setFormCategoryLabel(categoryInfo?.label || (categoryId || ''));
     setFormExpiresAt(isoToDateInput(item.expiresAt));
     setFormRotationInterval(item.rotationIntervalDays ? String(item.rotationIntervalDays) : '');
     originalPasswordRef.current = item.password;
@@ -440,9 +501,42 @@ export default function VaultClient() {
     }
 
     const nowIso = new Date().toISOString();
-    const explicitExpiresIso = dateInputToIso(formExpiresAt);
     const intervalDays = normalizeInterval(formRotationInterval);
-    const effectiveExpiresAt = calculateNextExpiration(explicitExpiresIso, intervalDays, nowIso);
+    const passwordChanged = editingItem ? formPassword !== editingItem.password : true;
+    let explicitExpiresIso = dateInputToIso(formExpiresAt);
+    if (passwordChanged && intervalDays) {
+      explicitExpiresIso = undefined;
+    }
+    const referenceIso = passwordChanged ? nowIso : editingItem?.expiresAt || nowIso;
+    const effectiveExpiresAt = calculateNextExpiration(explicitExpiresIso, intervalDays, referenceIso);
+
+    const trimmedCategoryLabel = formCategoryLabel.trim();
+    let categoryIdForSave = '';
+
+    if (trimmedCategoryLabel) {
+      const existingCategory = findCategoryByLabel(trimmedCategoryLabel, customCategories);
+      if (existingCategory) {
+        categoryIdForSave = existingCategory.id;
+        if (existingCategory.label !== formCategoryLabel) {
+          setFormCategoryLabel(existingCategory.label);
+        }
+      } else {
+        categoryIdForSave = slugifyCategory(trimmedCategoryLabel);
+        const newCategory = {
+          id: categoryIdForSave,
+          label: trimmedCategoryLabel,
+          color: getColorForCategory(trimmedCategoryLabel),
+        };
+        setCustomCategories([...customCategories, newCategory]);
+      }
+    } else {
+      categoryIdForSave = '';
+    }
+
+    if (trimmedCategoryLabel !== formCategoryLabel) {
+      setFormCategoryLabel(trimmedCategoryLabel);
+    }
+    setFormCategory(categoryIdForSave);
 
     if (editingItem) {
       // Edit existing item
@@ -455,7 +549,7 @@ export default function VaultClient() {
               password: formPassword,
               url: formUrl || undefined,
               notes: formNotes || undefined,
-              category: formCategory,
+              category: categoryIdForSave || undefined,
               expiresAt: effectiveExpiresAt,
               rotationIntervalDays: intervalDays,
               passwordHistory: (() => {
@@ -488,7 +582,7 @@ export default function VaultClient() {
         password: formPassword,
         url: formUrl || undefined,
         notes: formNotes || undefined,
-        category: formCategory,
+        category: categoryIdForSave || undefined,
         createdAt: nowIso,
         expiresAt: effectiveExpiresAt,
         rotationIntervalDays: intervalDays,
@@ -552,61 +646,11 @@ export default function VaultClient() {
 
   // Helper function to get category info by ID
   function getCategoryInfo(categoryId: string) {
-    const predefinedCategory = CATEGORIES.find(cat => cat.id === categoryId);
-    if (predefinedCategory) {
-      return predefinedCategory;
+    const match = findCategoryById(categoryId, customCategories);
+    if (match) {
+      return match;
     }
-    
-    const customCategory = customCategories.find(cat => cat.id === categoryId);
-    if (customCategory) {
-      return customCategory;
-    }
-    
-    // Default category if not found
-    return CATEGORIES[CATEGORIES.length - 1]; // 'other' category
-  }
-
-  function addCustomCategory() {
-    if (!newCategoryName.trim()) return;
-    
-    // Check if category already exists
-    const existingCategory = [...CATEGORIES, ...customCategories].find(
-      cat => cat.id === newCategoryName.trim().toLowerCase().replace(/\s+/g, '-')
-    );
-    
-    if (existingCategory) {
-      updateStatus(`Kategorie "${existingCategory.label}" existiert bereits.`, 'warning');
-      return;
-    }
-    
-    // Create a unique ID for the new category
-    const newCategoryId = newCategoryName.trim().toLowerCase().replace(/\s+/g, '-');
-    
-    // Select a random pre-defined color class for consistency
-    const predefinedColors = [
-      'bg-rose-500/10 text-rose-400 border-rose-500/20',
-      'bg-amber-500/10 text-amber-400 border-amber-500/20',
-      'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-      'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
-      'bg-violet-500/10 text-violet-400 border-violet-500/20',
-      'bg-fuchsia-500/10 text-fuchsia-400 border-fuchsia-500/20',
-    ];
-    
-    const randomColor = predefinedColors[Math.floor(Math.random() * predefinedColors.length)];
-    
-    const newCategory = {
-      id: newCategoryId,
-      label: newCategoryName.trim(),
-      color: randomColor
-    };
-    
-    setCustomCategories([...customCategories, newCategory]);
-    setNewCategoryName('');
-    setShowAddCategory(false);
-    // Markiere als "zu speichern", damit die neuen Kategorien gespeichert werden
-    setHasPendingSave(true);
-    setPendingSaveAt(Date.now());
-    updateStatus(`Kategorie "${newCategory.label}" hinzugefügt.`, 'success');
+    return CATEGORIES[CATEGORIES.length - 1];
   }
 
   const handleBeforeLogout = useCallback(async () => {
@@ -634,6 +678,16 @@ export default function VaultClient() {
             <p className="text-slate-400">🔒 Ende-zu-Ende verschlüsselt mit AES-256-GCM</p>
           </div>
           <div className="flex gap-3">
+            <Button
+              variant="ghost"
+              onClick={() => {
+                clearStash();
+                setPending(null);
+                updateStatus('Zwischenspeicher geleert.', 'info');
+              }}
+            >
+              Zwischenspeicher leeren
+            </Button>
             <Button variant="primary" onClick={saveVault}>
               Speichern
             </Button>
@@ -653,7 +707,7 @@ export default function VaultClient() {
           </Alert>
         )}
 
-        <div className="grid lg:grid-cols-3 gap-6">
+        <div className="grid lg:grid-cols-1 gap-6">
           <Card className="lg:col-span-2">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
               <div>
@@ -714,81 +768,6 @@ export default function VaultClient() {
             </div>
           </Card>
 
-          <Card>
-            <h2 className="text-lg font-semibold text-slate-100 mb-4">Kategorien verwalten</h2>
-            <div className="space-y-4 text-sm text-slate-300">
-              <p>
-                Verwalte Kategorien für deine Passwörter, um sie besser organisieren zu können.
-              </p>
-              
-              <Divider />
-              
-              <div className="space-y-3">
-                <h3 className="font-medium text-slate-200">Vordefinierte Kategorien</h3>
-                <div className="flex flex-wrap gap-2">
-                  {CATEGORIES.map(category => (
-                    <span 
-                      key={category.id} 
-                      className={`px-2 py-1 rounded text-xs ${category.color}`}
-                    >
-                      {category.label}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              
-              <Divider />
-              
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-medium text-slate-200">Eigene Kategorien</h3>
-                  <Button variant="ghost" size="sm" onClick={() => setShowAddCategory(true)}>
-                    + Neu
-                  </Button>
-                </div>
-                
-                {customCategories.length > 0 ? (
-                  <div className="flex flex-wrap gap-2">
-                    {customCategories.map(category => (
-                      <div key={category.id} className="flex items-center gap-1">
-                        <span className={`px-2 py-1 rounded text-xs ${category.color}`}>
-                          {category.label}
-                        </span>
-                        <button
-                          onClick={() => {
-                            setCustomCategories(customCategories.filter(c => c.id !== category.id));
-                            // Markiere als "zu speichern", damit die Änderung gespeichert wird
-                            setHasPendingSave(true);
-                            setPendingSaveAt(Date.now());
-                            updateStatus(`Kategorie "${category.label}" entfernt.`, 'warning');
-                          }}
-                          className="text-slate-500 hover:text-slate-300 p-1"
-                          title="Kategorie entfernen"
-                        >
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-slate-500 text-sm italic">Keine eigenen Kategorien erstellt</p>
-                )}
-              </div>
-              
-              <Divider />
-              
-              <div className="space-y-2">
-                <Button variant="secondary" onClick={saveVault}>
-                  Jetzt speichern
-                </Button>
-                <Button variant="ghost" onClick={() => { clearStash(); setPending(null); updateStatus('Zwischenspeicher geleert.', 'info'); }}>
-                  Generator-Zwischenspeicher löschen
-                </Button>
-              </div>
-            </div>
-          </Card>
         </div>
 
         {/* Detail Modal */}
@@ -1179,23 +1158,18 @@ export default function VaultClient() {
                     Metadaten
                   </h4>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-300 block">Kategorie</label>
-                    <div className="flex flex-wrap gap-2">
-                      {([...CATEGORIES, ...customCategories] as {id: string, label: string, color: string}[]).map(category => (
-                        <button
-                          key={category.id}
-                          type="button"
-                          onClick={() => setFormCategory(category.id)}
-                          className={`px-3 py-1.5 rounded-lg border text-sm transition-colors ${
-                            formCategory === category.id
-                              ? `${category.color} ring-2 ring-offset-2 ring-offset-slate-900 ring-slate-500`
-                              : 'bg-slate-800/50 text-slate-400 border-slate-700 hover:bg-slate-700/50'
-                          }`}
-                        >
-                          {category.label}
-                        </button>
+                    <Input
+                      label="Kategorie"
+                      value={formCategoryLabel}
+                      onChange={e => handleCategoryInputChange(e.target.value)}
+                      placeholder="z. B. Login, Banking, Social Media"
+                      list="vault-category-suggestions"
+                    />
+                    <datalist id="vault-category-suggestions">
+                      {getAllCategories(customCategories).map(category => (
+                        <option key={category.id} value={category.label} />
                       ))}
-                    </div>
+                    </datalist>
                   </div>
                   <Input
                     label="Notizen"
@@ -1214,45 +1188,6 @@ export default function VaultClient() {
                 </Button>
                 <Button variant="primary" onClick={saveItem}>
                   {editingItem ? 'Aktualisieren' : 'Hinzufügen'}
-                </Button>
-              </div>
-            </Card>
-          </div>
-        )}
-
-        {/* Custom Category Modal */}
-        {showAddCategory && (
-          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <Card className="max-w-md w-full bg-slate-900 border-slate-600 space-y-4 relative">
-              <button
-                onClick={() => setShowAddCategory(false)}
-                className="absolute top-4 right-4 text-slate-400 hover:text-slate-100"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-
-              <h3 className="text-xl font-semibold text-slate-100">Neue Kategorie</h3>
-              
-              <div className="space-y-3">
-                <Input
-                  label="Kategoriename"
-                  value={newCategoryName}
-                  onChange={e => setNewCategoryName(e.target.value)}
-                  placeholder="z. B. E-Commerce, Soziale Netzwerke"
-                  required
-                />
-              </div>
-
-              <Divider />
-
-              <div className="flex justify-end gap-3">
-                <Button variant="ghost" onClick={() => setShowAddCategory(false)}>
-                  Abbrechen
-                </Button>
-                <Button variant="primary" onClick={addCustomCategory}>
-                  Erstellen
                 </Button>
               </div>
             </Card>
