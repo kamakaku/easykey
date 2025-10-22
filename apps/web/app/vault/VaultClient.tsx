@@ -960,10 +960,38 @@ function handleDeleteBookmark(bookmarkId: string) {
 
               {/* Header */}
               <div className="flex items-start gap-3 pr-8">
-                <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg shadow-indigo-500/20">
-                  <span className="text-white text-xl font-bold">
-                    {viewingItem.title.charAt(0).toUpperCase()}
-                  </span>
+                <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg shadow-indigo-500/20 overflow-hidden">
+                  {(() => {
+                    let faviconUrl = null;
+                    if (viewingItem.url) {
+                      try {
+                        const urlObj = new URL(viewingItem.url);
+                        faviconUrl = `https://icons.duckduckgo.com/ip3/${urlObj.hostname}.ico`;
+                      } catch (error) {
+                        console.warn('Invalid URL for favicon:', viewingItem.url);
+                      }
+                    }
+                    const fallbackLetter = viewingItem.title.charAt(0).toUpperCase();
+
+                    return faviconUrl ? (
+                      <img
+                        src={faviconUrl}
+                        alt={`${viewingItem.title} favicon`}
+                        className="w-7 h-7 object-contain"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                          const parent = e.currentTarget.parentElement;
+                          if (parent) {
+                            parent.innerHTML = `<span class="text-white text-xl font-bold">${fallbackLetter}</span>`;
+                          }
+                        }}
+                      />
+                    ) : (
+                      <span className="text-white text-xl font-bold">
+                        {fallbackLetter}
+                      </span>
+                    );
+                  })()}
                 </div>
                 <div className="flex-1 min-w-0 space-y-1">
                   <div className="flex items-center justify-between gap-2">

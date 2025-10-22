@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <title>EasyKey</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: system-ui, sans-serif;
+        background: #0f172a;
+        color: #e2e8f0;
+      }
+      body {
+        margin: 0;
+        padding: 1.25rem;
+        width: 380px;
+        max-height: 600px;
+      }
+      fieldset {
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        border-radius: 0.75rem;
+        padding: 1.25rem;
+        margin-bottom: 1.25rem;
+      }
+      legend {
+        padding: 0 0.5rem;
+        font-weight: 600;
+        font-size: 0.9rem;
+      }
+      label {
+        display: block;
+        font-size: 0.875rem;
+        margin-bottom: 0.5rem;
+        font-weight: 500;
+      }
+      input {
+        width: 100%;
+        padding: 0.625rem 0.75rem;
+        border-radius: 0.5rem;
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        background: rgba(15, 23, 42, 0.6);
+        color: inherit;
+        font-size: 0.875rem;
+        box-sizing: border-box;
+      }
+      input:focus {
+        outline: none;
+        border-color: rgba(99, 102, 241, 0.6);
+        box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+      }
+      button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem;
+        border-radius: 0.5rem;
+        border: 1px solid rgba(99, 102, 241, 0.6);
+        background: rgba(79, 70, 229, 0.2);
+        color: #c7d2fe;
+        cursor: pointer;
+        font-size: 0.8125rem;
+        font-weight: 500;
+        transition: all 0.15s ease;
+      }
+      button:hover {
+        background: rgba(99, 102, 241, 0.3);
+        border-color: rgba(99, 102, 241, 0.8);
+      }
+      a:hover {
+        opacity: 1 !important;
+      }
+      .vault-item-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 0.5rem;
+      }
+      .vault-item-title {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex: 1;
+        margin: 0;
+        font-size: 0.875rem;
+        font-weight: 600;
+        position: relative;
+        cursor: default;
+      }
+      .vault-item-favicon {
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+        border-radius: 2px;
+      }
+      .vault-item-title:hover::after {
+        content: attr(data-url);
+        position: absolute;
+        top: calc(100% + 6px);
+        left: 0;
+        background: rgba(15, 23, 42, 0.95);
+        color: #94a3b8;
+        padding: 0.375rem 0.625rem;
+        border-radius: 0.375rem;
+        font-size: 0.6875rem;
+        white-space: nowrap;
+        pointer-events: none;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        z-index: 1000;
+        font-weight: 400;
+      }
+      .vault-item-link {
+        color: #94a3b8;
+        opacity: 0.6;
+        transition: all 0.15s;
+        text-decoration: none;
+        display: flex;
+        align-items: center;
+        flex-shrink: 0;
+      }
+      .vault-item-link:hover {
+        opacity: 1;
+        color: #c7d2fe;
+      }
+      #status {
+        margin: 0 0 1.25rem 0;
+        padding: 0.75rem;
+        font-size: 0.8125rem;
+        color: #93c5fd;
+        background: rgba(59, 130, 246, 0.1);
+        border-radius: 0.5rem;
+        border: 1px solid rgba(59, 130, 246, 0.2);
+      }
+      #status[data-variant="error"] {
+        color: #fca5a5;
+        background: rgba(248, 113, 113, 0.1);
+        border-color: rgba(248, 113, 113, 0.2);
+      }
+      #status[data-variant="success"] {
+        color: #bbf7d0;
+        background: rgba(34, 197, 94, 0.1);
+        border-color: rgba(34, 197, 94, 0.2);
+      }
+      pre {
+        display: none;
+      }
+      .vault-list {
+        display: flex;
+        flex-direction: column;
+        gap: 30px;
+        max-height: 220px;
+        overflow-y: auto;
+        padding-right: 4px;
+      }
+      .vault-list::-webkit-scrollbar {
+        width: 6px;
+      }
+      .vault-list::-webkit-scrollbar-track {
+        background: rgba(15, 23, 42, 0.4);
+        border-radius: 3px;
+      }
+      .vault-list::-webkit-scrollbar-thumb {
+        background: rgba(148, 163, 184, 0.3);
+        border-radius: 3px;
+      }
+      .vault-list::-webkit-scrollbar-thumb:hover {
+        background: rgba(148, 163, 184, 0.5);
+      }
+      .vault-item {
+        border: .5px solid rgba(148, 163, 184, 0.1);
+        border-radius: 0.4rem;
+        padding: 0.625rem 0.75rem;
+        background: rgba(255, 255, 255, 0.05);
+        transition: all 0.15s ease;
+      }
+      .vault-item:hover {
+        border-color: rgba(148, 163, 184, 0.4);
+        background: rgba(15, 23, 42, 0.8);
+      }
+      .vault-item-match {
+        border-color: rgba(99, 102, 241, 0.4);
+        background: rgba(99, 102, 241, 0.08);
+        box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.15);
+      }
+      .vault-item-match:hover {
+        border-color: rgba(99, 102, 241, 0.6);
+        background: rgba(99, 102, 241, 0.12);
+      }
+      .vault-item .category {
+        font-size: 0.625rem;
+        padding: 0.15rem 0.4rem;
+        border-radius: 999px;
+        background: rgba(99, 102, 241, 0.2);
+        color: #c7d2fe;
+        border: 1px solid rgba(99, 102, 241, 0.4);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        font-weight: 600;
+        display: none;
+      }
+      .vault-item p {
+        margin: 0 0 0.5rem 0;
+        font-size: 0.75rem;
+        color: #94a3b8;
+        line-height: 1.4;
+      }
+      .vault-item p:last-of-type {
+        margin-bottom: 0.625rem;
+      }
+      .vault-item-actions {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 0.625rem;
+      }
+      .vault-item-actions button {
+        flex: 1;
+        padding: 0.5rem;
+        font-size: 0.75rem;
+        position: relative;
+        min-width: 40px;
+      }
+      .vault-item-actions button svg {
+        display: block;
+        margin: 0 auto;
+      }
+      .vault-item-actions button:hover::after {
+        content: attr(data-tooltip);
+        position: absolute;
+        bottom: calc(100% + 6px);
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(15, 23, 42, 0.95);
+        color: #e2e8f0;
+        padding: 0.375rem 0.625rem;
+        border-radius: 0.375rem;
+        font-size: 0.6875rem;
+        white-space: nowrap;
+        pointer-events: none;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        z-index: 1000;
+      }
+      .vault-item-actions button:hover::before {
+        content: '';
+        position: absolute;
+        bottom: calc(100% + 1px);
+        left: 50%;
+        transform: translateX(-50%);
+        border: 5px solid transparent;
+        border-top-color: rgba(15, 23, 42, 0.95);
+        pointer-events: none;
+        z-index: 1001;
+      }
+      #vault-empty {
+        font-size: 0.75rem;
+        color: #64748b;
+        text-align: center;
+        margin: 1rem 0 0.5rem 0;
+        padding: 1rem;
+        background: rgba(15, 23, 42, 0.4);
+        border-radius: 0.5rem;
+      }
+      #suggestions-section {
+        border-color: rgba(248, 113, 113, 0.6);
+        background: rgba(248, 113, 113, 0.08);
+        display: none;
+        box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.15), 0 0 12px rgba(248, 113, 113, 0.25);
+        margin-bottom: 1.5rem;
+      }
+      #suggestions-section.has-items {
+        animation: pulse-alert 1.6s ease-in-out 2;
+      }
+      @keyframes pulse-alert {
+        0% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.35); }
+        70% { box-shadow: 0 0 0 10px rgba(248, 113, 113, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0); }
+      }
+      #suggestions-section legend {
+        color: #fecdd3;
+      }
+      .suggestions-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        margin-bottom: 0.875rem;
+        font-size: 0.8125rem;
+        color: #fecdd3;
+      }
+      .suggestions-header strong {
+        font-weight: 600;
+      }
+      .suggestion-count {
+        background: rgba(248, 113, 113, 0.2);
+        border: 1px solid rgba(248, 113, 113, 0.4);
+        color: #fecaca;
+        padding: 0.2rem 0.6rem;
+        border-radius: 999px;
+        font-size: 0.625rem;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        font-weight: 600;
+      }
+      #suggestions-empty {
+        font-size: 0.75rem;
+        color: #94a3b8;
+        text-align: center;
+        margin: 1rem 0 0.5rem 0;
+        padding: 1rem;
+        background: rgba(15, 23, 42, 0.4);
+        border-radius: 0.5rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+      <h1 style="margin:0;font-size:1.125rem;font-weight:700;">EasyKey</h1>
+      <a href="http://localhost:3000/vault" target="_blank" rel="noopener noreferrer" style="color:#c7d2fe;opacity:0.8;transition:opacity 0.15s;text-decoration:none;display:flex;align-items:center;" title="Zum Dashboard">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+          <polyline points="15 3 21 3 21 9"/>
+          <line x1="10" y1="14" x2="21" y2="3"/>
+        </svg>
+      </a>
+    </div>
+    <p id="status" data-variant="info">Bitte Master-Passwort eingeben, um den Vault zu entsperren.</p>
+    <fieldset id="suggestions-section" style="display:none;">
+      <legend>Neue Anmeldedaten</legend>
+      <div class="suggestions-header">
+        <strong>Gerade erkannt</strong>
+        <span id="suggestions-count" class="suggestion-count"></span>
+      </div>
+      <div id="suggestions-list" class="vault-list" style="max-height:160px;"></div>
+      <p id="suggestions-empty">
+        Keine neuen Anmeldedaten zum Speichern.
+      </p>
+      <p style="margin-top:0.75rem;font-size:0.7rem;color:#fecdd3;opacity:0.8;">
+        💡 Tipp: Zum Speichern musst du zuvor entsperren.
+      </p>
+    </fieldset>
+    <form id="unlock-form">
+      <fieldset id="unlock-section">
+        <legend>Entsperren</legend>
+        <label for="master-password">Master-Passwort</label>
+        <input id="master-password" type="password" autocomplete="current-password" placeholder="••••••••" />
+        <div style="margin-top:1rem;display:flex;justify-content:flex-end;">
+          <button type="submit">Entsperren</button>
+        </div>
+      </fieldset>
+    </form>
+    <fieldset>
+      <legend>Vault</legend>
+      <div id="vault-items" class="vault-list"></div>
+      <p id="vault-empty">Noch keine Daten geladen.</p>
+    </fieldset>
+    <script type="module" src="./popup.js"></script>
+  </body>
+</html>

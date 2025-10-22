@@ -77,16 +77,46 @@ function getExpirationMeta(item: VaultItemProps['item']) {
 export default function VaultItem({ item, onClick }: VaultItemProps) {
   const expirationMeta = getExpirationMeta(item);
 
+  // Extract domain from URL for favicon
+  let faviconUrl = null;
+  let fallbackLetter = item.title.charAt(0).toUpperCase();
+
+  if (item.url) {
+    try {
+      const urlObj = new URL(item.url);
+      const domain = urlObj.hostname;
+      faviconUrl = `https://icons.duckduckgo.com/ip3/${domain}.ico`;
+    } catch (error) {
+      console.warn('Invalid URL for favicon:', item.url);
+    }
+  }
+
   return (
     <div
       onClick={() => onClick(item)}
       className="flex items-center gap-3 p-3 bg-slate-800/50 hover:bg-slate-700/50 border border-slate-700/50 hover:border-slate-600 rounded-lg cursor-pointer transition-all group"
     >
       {/* Icon */}
-      <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-lg shadow-indigo-500/20 group-hover:shadow-indigo-500/30 transition-shadow">
-        <span className="text-white text-lg font-bold">
-          {item.title.charAt(0).toUpperCase()}
-        </span>
+      <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-lg shadow-indigo-500/20 group-hover:shadow-indigo-500/30 transition-shadow overflow-hidden">
+        {faviconUrl ? (
+          <img
+            src={faviconUrl}
+            alt={`${item.title} favicon`}
+            className="w-6 h-6 object-contain"
+            onError={(e) => {
+              // Fallback to letter if favicon fails to load
+              e.currentTarget.style.display = 'none';
+              const parent = e.currentTarget.parentElement;
+              if (parent) {
+                parent.innerHTML = `<span class="text-white text-lg font-bold">${fallbackLetter}</span>`;
+              }
+            }}
+          />
+        ) : (
+          <span className="text-white text-lg font-bold">
+            {fallbackLetter}
+          </span>
+        )}
       </div>
 
       {/* Content */}

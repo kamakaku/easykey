@@ -1,0 +1,19 @@
+{
+  "name": "@easykey/browser-extension",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsup --config tsup.config.ts",
+    "postbuild": "cp src/manifest.json dist/manifest.json && cp src/popup/index.html dist/popup.html && mkdir -p dist/icons && cp icons/*.svg dist/icons/ 2>/dev/null || true",
+    "dev": "tsup --config tsup.config.ts --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint \"src/**/*.{ts,tsx}\" --max-warnings=0 || true"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.266",
+    "@types/node": "^20.14.10",
+    "tsup": "^8.1.0",
+    "typescript": "^5.5.4"
+  }
+}

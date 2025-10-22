@@ -2,21 +2,10 @@
 > @easykey/web@0.1.0 dev /Users/kamakaku/_easykey/_anwendung/apps/web
 > next dev
 
- ⚠ Port 3000 is in use, trying 3001 instead.
- ⚠ Port 3001 is in use, trying 3002 instead.
-  ▲ Next.js 14.2.10
-  - Local:        http://localhost:3002
+ [33m[1m⚠[22m[39m Port 3000 is in use, trying 3001 instead.
+  [1m[38;2;173;127;168m▲ Next.js 14.2.10[39m[22m
+  - Local:        http://localhost:3001
   - Environments: .env.local
 
- ✓ Starting...
- ✓ Ready in 1515ms
-v.local
-
- ✓ Starting...
- ✓ Ready in 1445ms
-    http://localhost:3005
-  - Environments: .env.local
-
- ✓ Starting...
- ✓ Ready in 1338ms
-[?25h
+ [32m[1m✓[22m[39m Starting...
+ [32m[1m✓[22m[39m Ready in 1742ms
