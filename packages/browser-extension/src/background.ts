@@ -21,6 +21,8 @@ type VaultItem = {
   expiresAt?: string;
   rotationIntervalDays?: number;
   passwordHistory?: PasswordHistoryEntry[];
+  autoFill?: boolean;  // Enable/disable autofill for this item (default: true)
+  superLogin?: boolean;  // Enable autofill + auto-submit (default: false)
 };
 
 type VaultData = {
@@ -65,6 +67,9 @@ async function restoreSuggestions() {
       pendingSuggestions = easykeySuggestions as CredentialSuggestion[];
       updateBadge();
       notifySuggestionsChanged();
+
+      // Clean up duplicates if master key is already set
+      await cleanupDuplicateSuggestions();
     }
   } catch (error) {
     console.warn('[EasyKey] restoreSuggestions failed', error);
@@ -103,7 +108,12 @@ function notifyVaultUpdated() {
 
 async function fetchVaultBlob(): Promise<VaultBlob | null> {
   try {
-    const response = await fetch(getApiUrl('/backend/api/v1/vault'), {
+    // Use correct API path based on backend URL
+    const apiPath = backendBaseUrl.includes(':8080')
+      ? '/api/v1/vault'  // Direct backend access
+      : '/backend/api/v1/vault';  // Through Next.js proxy
+
+    const response = await fetch(getApiUrl(apiPath), {
       credentials: 'include',
       cache: 'no-store',
       headers: csrfToken ? { 'x-csrf-token': csrfToken } : undefined,
@@ -181,7 +191,13 @@ async function saveVaultData(data: VaultData) {
   const plaintext = JSON.stringify(data);
   const encrypted = await encryptForStorage(plaintext, key);
   const blobB64 = btoa(encrypted);
-  const response = await fetch(getApiUrl('/backend/api/v1/vault'), {
+
+  // Use correct API path based on backend URL
+  const apiPath = backendBaseUrl.includes(':8080')
+    ? '/api/v1/vault'  // Direct backend access
+    : '/backend/api/v1/vault';  // Through Next.js proxy
+
+  const response = await fetch(getApiUrl(apiPath), {
     method: 'PUT',
     credentials: 'include',
     headers: {
@@ -349,6 +365,8 @@ chrome.notifications.onButtonClicked.addListener(async (notificationId, buttonIn
               changedAt: nowIso,
             },
           ],
+          autoFill: true,  // Default: enabled
+          superLogin: false,  // Default: disabled (manual submit)
         };
         vault.items.push(newItem);
       }
@@ -399,6 +417,52 @@ function removeSuggestion(id: string) {
   void persistSuggestions();
 }
 
+async function cleanupDuplicateSuggestions() {
+  if (!masterKey || pendingSuggestions.length === 0) {
+    return;
+  }
+
+  console.log('[EasyKey Background] Cleaning up duplicate suggestions...');
+
+  try {
+    const vault = await loadAndDecryptVault(false);
+    const initialCount = pendingSuggestions.length;
+
+    // Filter out suggestions that already exist in vault
+    pendingSuggestions = pendingSuggestions.filter(suggestion => {
+      const alreadyExists = vault.items.some(item => {
+        if (!item.url) return false;
+        try {
+          const itemOrigin = new URL(item.url).origin;
+          const sameOrigin = itemOrigin === suggestion.origin;
+          const sameUsername = item.username === suggestion.username;
+          return sameOrigin && sameUsername;
+        } catch {
+          return false;
+        }
+      });
+
+      if (alreadyExists) {
+        console.log('[EasyKey Background] Removing duplicate suggestion:', suggestion.hostname, suggestion.username);
+      }
+
+      return !alreadyExists; // Keep only suggestions that don't exist in vault
+    });
+
+    const removedCount = initialCount - pendingSuggestions.length;
+    if (removedCount > 0) {
+      console.log(`[EasyKey Background] Removed ${removedCount} duplicate suggestion(s)`);
+      updateBadge();
+      notifySuggestionsChanged();
+      void persistSuggestions();
+    } else {
+      console.log('[EasyKey Background] No duplicate suggestions found');
+    }
+  } catch (error) {
+    console.warn('[EasyKey Background] Could not cleanup duplicate suggestions:', error);
+  }
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   console.info('[EasyKey] Extension installed');
 });
@@ -424,6 +488,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           cache.plaintext = null;
           cache.parsed = null;
           cache.updatedAt = 0;
+
+          // Clean up suggestions that are already in the vault
+          await cleanupDuplicateSuggestions();
+
           sendResponse({ ok: true });
         } else {
           sendResponse({ ok: false, error: 'invalid-key' });
@@ -475,15 +543,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                   const itemOrigin = new URL(item.url).origin;
                   const sameOrigin = itemOrigin === origin;
                   const sameUsername = item.username === username;
-                  const samePassword = item.password === password;
-                  return sameOrigin && sameUsername && samePassword;
+                  // Consider it "already exists" if same origin AND same username
+                  // (regardless of password - if password is different, it should update, not create new)
+                  return sameOrigin && sameUsername;
                 } catch {
                   return false;
                 }
               });
 
               if (alreadyExists) {
-                console.log('[EasyKey Background] Credentials already exist in vault, not creating suggestion');
+                console.log('[EasyKey Background] Credentials already exist in vault (same origin + username), not creating suggestion');
                 sendResponse({ ok: true, alreadyExists: true });
                 break;
               }
@@ -572,6 +641,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                   changedAt: nowIso,
                 },
               ],
+              autoFill: true,  // Default: enabled
+              superLogin: false,  // Default: disabled (manual submit)
             };
             vault.items.push(newItem);
           }
@@ -607,15 +678,72 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
           });
           if (match) {
-            sendResponse({
-              ok: true,
-              credentials: { username: match.username, password: match.password },
-            });
+            // Check if autofill is enabled for this item (default: true for backward compatibility)
+            const autoFillEnabled = match.autoFill !== false;
+
+            if (!autoFillEnabled) {
+              console.log('[EasyKey] Autofill disabled for item:', match.title);
+              sendResponse({ ok: true, credentials: null });
+            } else {
+              // Include superLogin setting in response
+              sendResponse({
+                ok: true,
+                credentials: {
+                  username: match.username,
+                  password: match.password,
+                },
+                superLogin: match.superLogin ?? false,  // Default: false
+              });
+            }
           } else {
             sendResponse({ ok: true, credentials: null });
           }
         } catch (error) {
           console.error('[EasyKey] Autofill lookup failed', error);
+          sendResponse({ ok: false, error: (error as Error).message });
+        }
+        break;
+      }
+
+      case 'easykey:update-item-settings': {
+        try {
+          if (!masterKey) {
+            sendResponse({ ok: false, error: 'Master key not set' });
+            break;
+          }
+
+          const { itemId, autoFill, superLogin } = message;
+          if (typeof itemId !== 'number') {
+            sendResponse({ ok: false, error: 'Invalid item ID' });
+            break;
+          }
+
+          const vault = await loadAndDecryptVault(false);
+          const item = vault.items.find(i => i.id === itemId);
+
+          if (!item) {
+            sendResponse({ ok: false, error: 'Item not found' });
+            break;
+          }
+
+          // Update settings
+          if (typeof autoFill === 'boolean') {
+            item.autoFill = autoFill;
+          }
+          if (typeof superLogin === 'boolean') {
+            item.superLogin = superLogin;
+            // If superLogin is enabled, autoFill must also be enabled
+            if (superLogin && !item.autoFill) {
+              item.autoFill = true;
+            }
+          }
+
+          item.updatedAt = new Date().toISOString();
+
+          await saveVaultData(vault);
+          sendResponse({ ok: true });
+        } catch (error) {
+          console.error('[EasyKey] Update item settings failed', error);
           sendResponse({ ok: false, error: (error as Error).message });
         }
         break;

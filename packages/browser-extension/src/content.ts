@@ -74,17 +74,17 @@ function extractCredentials(): Credentials | null {
   };
 }
 
-function receiveFill(credentials: Credentials): boolean {
-  console.log('[EasyKey Content] receiveFill called with:', { hasUsername: !!credentials.username, hasPassword: !!credentials.password });
+function receiveFill(credentials: Credentials, autoSubmit: boolean = true): boolean {
+  console.log('[EasyKey Content] receiveFill called with:', { hasUsername: !!credentials.username, hasPassword: !!credentials.password, autoSubmit });
 
-  let filledFields = 0;
+  let passwordFilled = false;
 
   const passwordField = document.querySelector<HTMLInputElement>('input[type="password"]');
   if (passwordField && credentials.password) {
     passwordField.value = credentials.password;
     passwordField.dispatchEvent(new Event('input', { bubbles: true }));
     passwordField.dispatchEvent(new Event('change', { bubbles: true }));
-    filledFields++;
+    passwordFilled = true;
     console.log('[EasyKey Content] Password field filled');
   } else {
     console.log('[EasyKey Content] Password field not found or no password to fill');
@@ -95,13 +95,64 @@ function receiveFill(credentials: Credentials): boolean {
     usernameField.value = credentials.username;
     usernameField.dispatchEvent(new Event('input', { bubbles: true }));
     usernameField.dispatchEvent(new Event('change', { bubbles: true }));
-    filledFields++;
     console.log('[EasyKey Content] Username field filled');
   } else if (credentials.username) {
     console.log('[EasyKey Content] Username field not found');
   }
 
-  return filledFields > 0;
+  // Auto-submit only if password was filled and autoSubmit is enabled
+  if (passwordFilled && autoSubmit) {
+    console.log('[EasyKey Content] Auto-submit enabled, attempting to submit form...');
+
+    // Try to find and submit the form
+    const form = passwordField?.form;
+    if (form) {
+      console.log('[EasyKey Content] Form found, submitting via form.submit()');
+
+      // First try to find and click the submit button (better for JavaScript validation)
+      const submitButton = form.querySelector<HTMLButtonElement>('button[type="submit"], input[type="submit"]');
+      if (submitButton) {
+        console.log('[EasyKey Content] Submit button found, clicking it');
+        setTimeout(() => {
+          submitButton.click();
+        }, 100); // Small delay to ensure fields are properly set
+      } else {
+        // Fallback: trigger form submit event
+        console.log('[EasyKey Content] No submit button found, dispatching submit event');
+        setTimeout(() => {
+          form.requestSubmit();
+        }, 100);
+      }
+    } else if (passwordField) {
+      // Fallback: simulate Enter key press on password field
+      console.log('[EasyKey Content] No form found, simulating Enter key press on password field');
+      setTimeout(() => {
+        const enterEvent = new KeyboardEvent('keydown', {
+          key: 'Enter',
+          code: 'Enter',
+          keyCode: 13,
+          which: 13,
+          bubbles: true,
+          cancelable: true
+        });
+        passwordField.dispatchEvent(enterEvent);
+
+        // Also dispatch keyup for completeness
+        const enterUpEvent = new KeyboardEvent('keyup', {
+          key: 'Enter',
+          code: 'Enter',
+          keyCode: 13,
+          which: 13,
+          bubbles: true,
+          cancelable: true
+        });
+        passwordField.dispatchEvent(enterUpEvent);
+      }, 100);
+    }
+  }
+
+  // Return true only if password field was filled (that's what matters for login)
+  return passwordFilled;
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, _sendResponse) => {
@@ -112,7 +163,8 @@ chrome.runtime.onMessage.addListener((message, _sender, _sendResponse) => {
       return true;
     }
     case 'easykey:fill-credentials': {
-      receiveFill(message.credentials ?? {});
+      const autoSubmit = message.autoSubmit !== undefined ? message.autoSubmit : true;
+      receiveFill(message.credentials ?? {}, autoSubmit);
       _sendResponse({ ok: true });
       return true;
     }
@@ -136,19 +188,35 @@ async function requestAutofill() {
     if (response?.ok && response.credentials) {
       console.log('[EasyKey Content] Credentials found, attempting to fill...');
 
+      // Use superLogin setting from response (default: false)
+      const autoSubmit = response.superLogin === true;
+      console.log('[EasyKey Content] SuperLogin enabled:', autoSubmit);
+
       // Try to fill immediately
-      const filled = receiveFill(response.credentials);
+      const filled = receiveFill(response.credentials, autoSubmit);
 
       if (filled) {
         console.log('[EasyKey Content] Autofill successful, showing notification');
+        // Store autofilled credentials to prevent re-suggesting them
+        lastAutofilledCredentials = {
+          username: response.credentials.username,
+          password: response.credentials.password || '',
+          timestamp: Date.now()
+        };
         showAutofillNotification(response.credentials.username);
       } else {
         // Retry after a delay for dynamic pages that load fields later
         console.log('[EasyKey Content] No fields found, retrying after 1s...');
         setTimeout(() => {
-          const retryFilled = receiveFill(response.credentials);
+          const retryFilled = receiveFill(response.credentials, autoSubmit);
           if (retryFilled) {
             console.log('[EasyKey Content] Autofill successful on retry, showing notification');
+            // Store autofilled credentials to prevent re-suggesting them
+            lastAutofilledCredentials = {
+              username: response.credentials.username,
+              password: response.credentials.password || '',
+              timestamp: Date.now()
+            };
             showAutofillNotification(response.credentials.username);
           } else {
             console.log('[EasyKey Content] Autofill failed - no password fields found');
@@ -166,6 +234,7 @@ async function requestAutofill() {
 }
 
 let lastSubmittedCredentials: { username?: string; password: string; timestamp: number } | null = null;
+let lastAutofilledCredentials: { username?: string; password: string; timestamp: number } | null = null;
 
 function handleFormSubmit(event: Event) {
   console.log('[EasyKey Content] Form submit detected', event);
@@ -219,6 +288,15 @@ function checkLoginSuccess(credentials: { username?: string; password: string })
       lastCheckedCredentials.password === credentials.password &&
       now - lastCheckedCredentials.timestamp < 3000) {
     console.log('[EasyKey Content] Duplicate check prevented (same credentials within 3s)');
+    return;
+  }
+
+  // Check if these credentials were autofilled - if so, don't suggest saving
+  if (lastAutofilledCredentials &&
+      lastAutofilledCredentials.username === credentials.username &&
+      lastAutofilledCredentials.password === credentials.password &&
+      now - lastAutofilledCredentials.timestamp < 10000) { // Within 10 seconds
+    console.log('[EasyKey Content] These credentials were autofilled from vault, not suggesting save');
     return;
   }
 

@@ -1,0 +1,8 @@
+
+> @easykey/web@0.1.0 build /Users/kamakaku/_easykey/_anwendung/apps/web
+> next build
+
+  ▲ Next.js 14.2.10
+  - Environments: .env.local
+
+   Creating an optimized production build ...

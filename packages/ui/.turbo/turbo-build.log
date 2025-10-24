@@ -1,0 +1,12 @@
+
+> @easykey/ui@0.1.0 build /Users/kamakaku/_easykey/_anwendung/packages/ui
+> tsc -p tsconfig.json
+
+src/primitives/Button.tsx(1,19): error TS7016: Could not find a declaration file for module 'react'. '/Users/kamakaku/_easykey/_anwendung/node_modules/.pnpm/react@18.3.1/node_modules/react/index.js' implicitly has an 'any' type.
+  Try `npm i --save-dev @types/react` if it exists or add a new declaration (.d.ts) file containing `declare module 'react';`
+src/primitives/Button.tsx(5,64): error TS7031: Binding element 'children' implicitly has an 'any' type.
+src/primitives/Button.tsx(18,5): error TS7026: JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists.
+src/primitives/Button.tsx(18,5): error TS7016: Could not find a declaration file for module 'react/jsx-runtime'. '/Users/kamakaku/_easykey/_anwendung/node_modules/.pnpm/react@18.3.1/node_modules/react/jsx-runtime.js' implicitly has an 'any' type.
+  Try `npm i --save-dev @types/react` if it exists or add a new declaration (.d.ts) file containing `declare module 'react/jsx-runtime';`
+src/primitives/Button.tsx(20,5): error TS7026: JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists.
+ ELIFECYCLE  Command failed with exit code 2.

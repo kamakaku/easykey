@@ -1,0 +1,22 @@
+
+> @easykey/browser-extension@0.1.0 build /Users/kamakaku/_easykey/_anwendung/packages/browser-extension
+> tsup --config tsup.config.ts
+
+CLI Building entry: {"background":"src/background.ts","content":"src/content.ts","popup":"src/popup/index.ts"}
+CLI Using tsconfig: tsconfig.json
+CLI tsup v8.5.0
+CLI Using tsup config: /Users/kamakaku/_easykey/_anwendung/packages/browser-extension/tsup.config.ts
+CLI Target: chrome128
+CLI Cleaning output folder
+ESM Build start
+ESM dist/content.js        20.64 KB
+ESM dist/background.js     23.88 KB
+ESM dist/popup.js          19.36 KB
+ESM dist/content.js.map    35.14 KB
+ESM dist/popup.js.map      36.50 KB
+ESM dist/background.js.map 43.15 KB
+ESM ⚡️ Build success in 29ms
+
+> @easykey/browser-extension@0.1.0 postbuild /Users/kamakaku/_easykey/_anwendung/packages/browser-extension
+> cp src/manifest.json dist/manifest.json && cp src/popup/index.html dist/popup.html && mkdir -p dist/icons && cp icons/*.svg dist/icons/ 2>/dev/null || true
+

@@ -1,8 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Card, Input, Alert } from '../components/UI';
+import {
+  isWebAuthnSupported,
+  isPlatformAuthenticatorAvailable,
+  authenticateWithBiometric,
+} from '@/lib/webauthn';
 
 type Mode = 'login' | 'register';
 
@@ -14,6 +19,19 @@ export default function LoginClient() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [biometricLoading, setBiometricLoading] = useState(false);
+
+  // Check biometric availability on mount
+  useEffect(() => {
+    const checkBiometric = async () => {
+      if (isWebAuthnSupported()) {
+        const available = await isPlatformAuthenticatorAvailable();
+        setBiometricAvailable(available);
+      }
+    };
+    checkBiometric();
+  }, []);
 
   const toggleMode = (next: Mode) => {
     if (next === mode) return;
@@ -61,6 +79,28 @@ export default function LoginClient() {
       setError(err?.message || 'Unbekannter Fehler');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleBiometricLogin() {
+    setError(null);
+    setMessage(null);
+    setBiometricLoading(true);
+
+    try {
+      const result = await authenticateWithBiometric();
+
+      if (result.success) {
+        setMessage('Biometrische Authentifizierung erfolgreich!');
+        router.replace('/dashboard');
+        router.refresh();
+      } else {
+        setError(result.error || 'Biometrische Authentifizierung fehlgeschlagen');
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Unbekannter Fehler');
+    } finally {
+      setBiometricLoading(false);
     }
   }
 
@@ -174,6 +214,51 @@ export default function LoginClient() {
               {loading ? 'Bitte warten …' : mode === 'login' ? 'Anmelden' : 'Registrieren'}
             </Button>
           </form>
+
+          {/* Biometric Login Option */}
+          {mode === 'login' && biometricAvailable && (
+            <>
+              <div className="relative my-6">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-slate-700"></div>
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-slate-900/60 px-2 text-slate-400">oder</span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleBiometricLogin}
+                disabled={biometricLoading}
+                className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-gradient-to-r from-purple-500/20 to-indigo-500/20 border border-purple-500/30 hover:border-purple-500/50 rounded-lg text-slate-200 font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {biometricLoading ? (
+                  <>
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-purple-400"></div>
+                    <span>Authentifiziere...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg
+                      className="w-5 h-5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4"
+                      />
+                    </svg>
+                    <span>Mit Biometrie anmelden</span>
+                  </>
+                )}
+              </button>
+            </>
+          )}
 
           {error && (
             <Alert variant="error" className="mt-4">

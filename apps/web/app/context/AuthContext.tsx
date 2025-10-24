@@ -24,6 +24,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
 
+  // Session timeout state
+  const [lastActivity, setLastActivity] = useState<number>(Date.now());
+
   // Lade Encryption Key aus sessionStorage beim Start
   useEffect(() => {
     async function loadEncryptionKey() {
@@ -98,6 +101,55 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     checkAuth();
   }, []);
+
+  // Session timeout logic
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    // Get timeout preference from localStorage
+    const getTimeoutMinutes = (): number | null => {
+      try {
+        const timeout = localStorage.getItem('ek_session_timeout');
+        if (!timeout || timeout === 'never') return null;
+        return parseInt(timeout, 10);
+      } catch {
+        return 30; // Default 30 minutes
+      }
+    };
+
+    const timeoutMinutes = getTimeoutMinutes();
+    if (timeoutMinutes === null) return; // No timeout if set to 'never'
+
+    // Update last activity on user interaction
+    const updateActivity = () => {
+      setLastActivity(Date.now());
+    };
+
+    // Listen to user activity events
+    const events = ['mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
+    events.forEach(event => {
+      window.addEventListener(event, updateActivity);
+    });
+
+    // Check for inactivity every 30 seconds
+    const checkInterval = setInterval(() => {
+      const now = Date.now();
+      const inactiveTime = now - lastActivity;
+      const timeoutMs = timeoutMinutes * 60 * 1000;
+
+      if (inactiveTime >= timeoutMs) {
+        console.log('Session timeout due to inactivity');
+        logout();
+      }
+    }, 30000); // Check every 30 seconds
+
+    return () => {
+      events.forEach(event => {
+        window.removeEventListener(event, updateActivity);
+      });
+      clearInterval(checkInterval);
+    };
+  }, [isAuthenticated, lastActivity]);
 
   // Redirect logic
   useEffect(() => {

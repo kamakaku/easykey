@@ -1,0 +1,4 @@
+
+> @easykey/extension@0.1.0 build /Users/kamakaku/_easykey/_anwendung/apps/extension
+> tsc -p tsconfig.json
+

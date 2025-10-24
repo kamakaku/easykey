@@ -1,4 +1,9 @@
 import { exportKey, generateKeyFromPassword } from '../crypto';
+import {
+  isWebAuthnSupported,
+  isPlatformAuthenticatorAvailable,
+  authenticateWithBiometric,
+} from '../lib/webauthn';
 
 const statusEl = document.querySelector<HTMLParagraphElement>('#status');
 const unlockForm = document.querySelector<HTMLFormElement>('#unlock-form');
@@ -18,6 +23,8 @@ type VaultItem = {
   url?: string;
   notes?: string;
   category?: string;
+  autoFill?: boolean;  // Enable/disable autofill for this item (default: true)
+  superLogin?: boolean;  // Enable autofill + auto-submit (default: false)
 };
 
 type VaultData = {
@@ -294,14 +301,45 @@ async function renderVault(data: VaultData) {
     fillButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
     actionRow.appendChild(fillButton);
 
+    // Settings toggle - SuperLogin only
+    const settingsRow = document.createElement('div');
+    settingsRow.className = 'vault-item-settings';
+
+    // SuperLogin toggle
+    const superLoginToggle = document.createElement('button');
+    superLoginToggle.type = 'button';
+    superLoginToggle.dataset.action = 'toggle-superlogin';
+    superLoginToggle.dataset.index = String(originalIndex);
+    superLoginToggle.dataset.itemId = String(item.id);
+    const superLoginEnabled = item.superLogin === true;
+    superLoginToggle.className = superLoginEnabled ? 'toggle-switch toggle-enabled' : 'toggle-switch toggle-disabled';
+    superLoginToggle.dataset.tooltip = 'Automatisch ausfüllen und einloggen mit einem Klick';
+
+    // Create switch UI
+    const switchTrack = document.createElement('span');
+    switchTrack.className = 'switch-track';
+    const switchThumb = document.createElement('span');
+    switchThumb.className = 'switch-thumb';
+    switchTrack.appendChild(switchThumb);
+
+    const switchLabel = document.createElement('span');
+    switchLabel.className = 'switch-label';
+    switchLabel.textContent = 'SuperLogin';
+
+    superLoginToggle.appendChild(switchTrack);
+    superLoginToggle.appendChild(switchLabel);
+    settingsRow.appendChild(superLoginToggle);
+
     wrapper.appendChild(actionRow);
+    wrapper.appendChild(settingsRow);
 
     vaultItemsContainer.appendChild(wrapper);
   });
 }
 
 async function loadConfig() {
-  const baseUrl = 'http://localhost:3000/';
+  // Extension kommuniziert direkt mit Backend API (Port 8080), nicht über Next.js
+  const baseUrl = 'http://127.0.0.1:8080/';
   await chrome.runtime.sendMessage({
     type: 'easykey:configure',
     baseUrl,
@@ -356,6 +394,37 @@ unlockForm?.addEventListener('submit', async event => {
   }
 });
 
+async function handleBiometricUnlock() {
+  const biometricBtn = document.querySelector<HTMLButtonElement>('#biometric-unlock-btn');
+  if (!biometricBtn) return;
+
+  biometricBtn.disabled = true;
+  const originalHTML = biometricBtn.innerHTML;
+  biometricBtn.innerHTML = '<div style="display:inline-block;width:16px;height:16px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin 0.6s linear infinite;"></div> Authentifiziere...';
+
+  showStatus('Biometrische Authentifizierung läuft...', 'info');
+
+  try {
+    const result = await authenticateWithBiometric();
+
+    if (result.success) {
+      showStatus('Biometrische Authentifizierung erfolgreich!', 'success');
+      setUnlockVisible(false);
+      await loadSuggestions();
+      await loadVault();
+    } else {
+      showStatus(result.error || 'Biometrische Authentifizierung fehlgeschlagen', 'error');
+      biometricBtn.disabled = false;
+      biometricBtn.innerHTML = originalHTML;
+    }
+  } catch (error) {
+    console.error('[EasyKey] Biometric unlock error:', error);
+    showStatus('Biometrische Authentifizierung fehlgeschlagen', 'error');
+    biometricBtn.disabled = false;
+    biometricBtn.innerHTML = originalHTML;
+  }
+}
+
 async function loadVault() {
   clearVaultList();
   try {
@@ -397,6 +466,30 @@ async function loadVault() {
 setUnlockVisible(true);
 
 void loadConfig();
+
+// Initialize biometric button
+async function initBiometricUI() {
+  const biometricSection = document.querySelector<HTMLDivElement>('#biometric-section');
+  const biometricBtn = document.querySelector<HTMLButtonElement>('#biometric-unlock-btn');
+
+  if (!biometricSection || !biometricBtn) return;
+
+  // TEMPORARILY DISABLED: Biometric unlock needs encryption key retrieval
+  // The extension needs the master password to derive the encryption key (zero-knowledge architecture)
+  // WebAuthn only authenticates the user, but doesn't provide the encryption key
+  // TODO: Implement secure local storage of encryption key after first password unlock
+
+  // Check if biometric authentication is available
+  if (false && isWebAuthnSupported()) {  // Disabled: always false
+    const available = await isPlatformAuthenticatorAvailable();
+    if (available) {
+      biometricSection.style.display = 'block';
+      biometricBtn.addEventListener('click', handleBiometricUnlock);
+    }
+  }
+}
+
+void initBiometricUI();
 
 async function initializeSessionKey() {
   if (!chrome.storage?.session) {
@@ -452,8 +545,15 @@ vaultItemsContainer?.addEventListener('click', event => {
   const target = event.target as HTMLElement;
   if (!(target instanceof HTMLElement)) return;
 
-  const action = target.dataset.action;
-  const indexStr = target.dataset.index;
+  // Check if we clicked inside a button (handle both button and child elements)
+  let button = target;
+  if (target.tagName !== 'BUTTON') {
+    button = target.closest('button') as HTMLElement;
+  }
+  if (!button) return;
+
+  const action = button.dataset.action;
+  const indexStr = button.dataset.index;
   if (!action || indexStr === undefined) return;
 
   const index = Number(indexStr);
@@ -469,6 +569,9 @@ vaultItemsContainer?.addEventListener('click', event => {
       break;
     case 'copy-password':
       void copyPassword(item);
+      break;
+    case 'toggle-superlogin':
+      void toggleSuperLogin(item, button);
       break;
     default:
       break;
@@ -553,6 +656,48 @@ async function dismissSuggestion(id: string) {
     await loadSuggestions();
   } catch (error) {
     console.error('[EasyKey] dismissSuggestion Fehler', error);
+  }
+}
+
+async function toggleSuperLogin(item: VaultItem, button: HTMLElement) {
+  try {
+    const currentState = item.superLogin === true;
+    const newState = !currentState;
+
+    // Optimistic UI update
+    if (newState) {
+      button.classList.remove('toggle-disabled');
+      button.classList.add('toggle-enabled');
+    } else {
+      button.classList.remove('toggle-enabled');
+      button.classList.add('toggle-disabled');
+    }
+
+    showStatus(`SuperLogin wird ${newState ? 'aktiviert' : 'deaktiviert'}...`, 'info');
+
+    const response = await chrome.runtime.sendMessage({
+      type: 'easykey:update-item-settings',
+      itemId: item.id,
+      superLogin: newState,
+    });
+
+    if (response?.ok) {
+      showStatus(`SuperLogin ${newState ? 'aktiviert' : 'deaktiviert'}.`, 'success');
+      await loadVault(); // Reload to sync state
+    } else {
+      // Revert on error
+      if (currentState) {
+        button.classList.remove('toggle-disabled');
+        button.classList.add('toggle-enabled');
+      } else {
+        button.classList.remove('toggle-enabled');
+        button.classList.add('toggle-disabled');
+      }
+      showStatus('Fehler beim Ändern der Einstellung.', 'error');
+    }
+  } catch (error) {
+    console.error('[EasyKey] toggleSuperLogin Fehler', error);
+    showStatus('Fehler beim Ändern der Einstellung.', 'error');
   }
 }
 
