@@ -19,7 +19,6 @@ interface VaultItemProps {
     rotationIntervalDays?: number;
     passwordHistory?: { value: string; changedAt: string }[];
     autoFill?: boolean;  // Enable/disable autofill for this item (default: true)
-    superLogin?: boolean;  // Enable autofill + auto-submit (default: false)
   };
   onClick: (item: any) => void;
 }

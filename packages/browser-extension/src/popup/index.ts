@@ -7,6 +7,7 @@ import {
 
 const statusEl = document.querySelector<HTMLParagraphElement>('#status');
 const unlockForm = document.querySelector<HTMLFormElement>('#unlock-form');
+const emailInput = document.querySelector<HTMLInputElement>('#email');
 const passwordInput = document.querySelector<HTMLInputElement>('#master-password');
 const vaultItemsContainer = document.querySelector<HTMLDivElement>('#vault-items');
 const vaultEmptyState = document.querySelector<HTMLParagraphElement>('#vault-empty');
@@ -24,7 +25,6 @@ type VaultItem = {
   notes?: string;
   category?: string;
   autoFill?: boolean;  // Enable/disable autofill for this item (default: true)
-  superLogin?: boolean;  // Enable autofill + auto-submit (default: false)
 };
 
 type VaultData = {
@@ -169,17 +169,27 @@ function resolveCategoryLabel(categoryId?: string) {
 }
 
 async function renderVault(data: VaultData) {
+  console.log('[EasyKey Popup] renderVault() called with data:', data);
+  console.log('[EasyKey Popup] vaultItemsContainer:', vaultItemsContainer);
+  console.log('[EasyKey Popup] vaultEmptyState:', vaultEmptyState);
+
   currentVault = data;
-  if (!vaultItemsContainer || !vaultEmptyState) return;
+  if (!vaultItemsContainer || !vaultEmptyState) {
+    console.error('[EasyKey Popup] DOM elements not found!');
+    return;
+  }
 
   vaultItemsContainer.innerHTML = '';
+  console.log('[EasyKey Popup] Cleared vault items container');
 
   if (!data.items || data.items.length === 0) {
+    console.log('[EasyKey Popup] No items in vault, showing empty state');
     vaultEmptyState.textContent = 'Keine Einträge im Vault.';
     vaultEmptyState.style.display = '';
     return;
   }
 
+  console.log('[EasyKey Popup] Vault has', data.items.length, 'items, hiding empty state');
   vaultEmptyState.style.display = 'none';
 
   // Get current tab URL for matching
@@ -212,7 +222,10 @@ async function renderVault(data: VaultData) {
     return 0;
   });
 
-  sortedItems.forEach(({ item, originalIndex, isMatch }) => {
+  console.log('[EasyKey Popup] Creating DOM elements for', sortedItems.length, 'items...');
+
+  sortedItems.forEach(({ item, originalIndex, isMatch }, index) => {
+    console.log(`[EasyKey Popup] Creating vault item ${index + 1}:`, item.title);
     const wrapper = document.createElement('div');
     wrapper.className = isMatch ? 'vault-item vault-item-match' : 'vault-item';
     wrapper.dataset.index = String(originalIndex);
@@ -301,40 +314,14 @@ async function renderVault(data: VaultData) {
     fillButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
     actionRow.appendChild(fillButton);
 
-    // Settings toggle - SuperLogin only
-    const settingsRow = document.createElement('div');
-    settingsRow.className = 'vault-item-settings';
-
-    // SuperLogin toggle
-    const superLoginToggle = document.createElement('button');
-    superLoginToggle.type = 'button';
-    superLoginToggle.dataset.action = 'toggle-superlogin';
-    superLoginToggle.dataset.index = String(originalIndex);
-    superLoginToggle.dataset.itemId = String(item.id);
-    const superLoginEnabled = item.superLogin === true;
-    superLoginToggle.className = superLoginEnabled ? 'toggle-switch toggle-enabled' : 'toggle-switch toggle-disabled';
-    superLoginToggle.dataset.tooltip = 'Automatisch ausfüllen und einloggen mit einem Klick';
-
-    // Create switch UI
-    const switchTrack = document.createElement('span');
-    switchTrack.className = 'switch-track';
-    const switchThumb = document.createElement('span');
-    switchThumb.className = 'switch-thumb';
-    switchTrack.appendChild(switchThumb);
-
-    const switchLabel = document.createElement('span');
-    switchLabel.className = 'switch-label';
-    switchLabel.textContent = 'SuperLogin';
-
-    superLoginToggle.appendChild(switchTrack);
-    superLoginToggle.appendChild(switchLabel);
-    settingsRow.appendChild(superLoginToggle);
-
     wrapper.appendChild(actionRow);
-    wrapper.appendChild(settingsRow);
 
     vaultItemsContainer.appendChild(wrapper);
+    console.log(`[EasyKey Popup] Vault item ${index + 1} appended to container`);
   });
+
+  console.log('[EasyKey Popup] All vault items rendered. vaultItemsContainer children:', vaultItemsContainer.children.length);
+  console.log('[EasyKey Popup] vaultItemsContainer HTML length:', vaultItemsContainer.innerHTML.length);
 }
 
 async function loadConfig() {
@@ -369,27 +356,66 @@ async function loadSuggestions() {
 
 unlockForm?.addEventListener('submit', async event => {
   event.preventDefault();
+  const email = emailInput?.value?.trim() ?? '';
   const password = passwordInput?.value ?? '';
+
+  if (!email) {
+    showStatus('Bitte E-Mail eingeben.', 'error');
+    emailInput?.focus();
+    return;
+  }
+
   if (!password) {
     showStatus('Bitte Master-Passwort eingeben.', 'error');
+    passwordInput?.focus();
     return;
   }
 
   try {
+    // Step 1: Login to backend to get session cookie
+    console.log('[EasyKey Popup] Logging in to backend with email:', email);
+    showStatus('Anmeldung am Backend …', 'info');
+
+    const loginResponse = await fetch('http://127.0.0.1:8080/api/v1/auth/login', {
+      method: 'POST',
+      credentials: 'include', // Important: send and store cookies
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email, password }),
+    });
+
+    if (!loginResponse.ok) {
+      const errorText = await loginResponse.text();
+      console.error('[EasyKey Popup] Backend login failed:', loginResponse.status, errorText);
+      showStatus('Login fehlgeschlagen: ' + errorText, 'error');
+      return;
+    }
+
+    console.log('[EasyKey Popup] Backend login successful');
+
+    // Step 2: Generate encryption key from password
+    console.log('[EasyKey Popup] Generating encryption key...');
     const key = await generateKeyFromPassword(password);
     const rawKey = await exportKey(key);
+
+    // Step 3: Set master key in background script
     await chrome.runtime.sendMessage({ type: 'easykey:set-master-key', key: Array.from(rawKey) });
+
+    // Step 4: Store session key
     if (chrome.storage?.session) {
       await chrome.storage.session.set({ easykeySession: { key: Array.from(rawKey) } });
     }
+
     showStatus('Vault wird geladen …', 'info');
+    emailInput!.value = '';
     passwordInput!.value = '';
     setUnlockVisible(false);
     await loadSuggestions();
     await loadVault();
   } catch (error) {
-    console.error('[EasyKey] Master-Key Fehler', error);
-    showStatus('Schlüssel konnte nicht gesetzt werden.', 'error');
+    console.error('[EasyKey] Login Fehler', error);
+    showStatus('Login fehlgeschlagen: ' + (error as Error).message, 'error');
     setUnlockVisible(true);
   }
 });
@@ -426,28 +452,44 @@ async function handleBiometricUnlock() {
 }
 
 async function loadVault() {
+  console.log('[EasyKey Popup] loadVault() called');
   clearVaultList();
   try {
+    console.log('[EasyKey Popup] Sending get-vault message to background...');
     const response = await chrome.runtime.sendMessage({ type: 'easykey:get-vault' });
+    console.log('[EasyKey Popup] get-vault response:', response);
+
     if (response?.ok) {
+      console.log('[EasyKey Popup] Response OK, checking vault data...');
+      console.log('[EasyKey Popup] response.vault type:', typeof response.vault);
+      console.log('[EasyKey Popup] response.vault length:', response.vault?.length);
+
       if (response.vault) {
         let parsed: VaultData | null = null;
         try {
+          console.log('[EasyKey Popup] Parsing vault JSON...');
           parsed = JSON.parse(response.vault) as VaultData;
+          console.log('[EasyKey Popup] Parsed vault:', parsed);
+          console.log('[EasyKey Popup] Vault items count:', parsed?.items?.length);
         } catch (error) {
-          console.error('[EasyKey] JSON parse error', error);
+          console.error('[EasyKey Popup] JSON parse error', error);
+          console.error('[EasyKey Popup] Raw vault string:', response.vault);
         }
         if (parsed) {
+          console.log('[EasyKey Popup] Calling renderVault with parsed data...');
           renderVault(parsed);
           showStatus('Vault geladen.', 'success');
         } else {
+          console.error('[EasyKey Popup] Parsed is null/undefined');
           showStatus('Vault konnte nicht geparst werden.', 'error');
         }
       } else {
+        console.log('[EasyKey Popup] No vault data in response');
         showStatus('Kein Vault vorhanden oder leer.', 'info');
       }
     } else {
       const errorMessage = response?.error ?? 'unbekannt';
+      console.error('[EasyKey Popup] Response NOT OK, error:', errorMessage);
       showStatus(`Fehler: ${errorMessage}`, 'error');
       if (typeof errorMessage === 'string' && errorMessage.toLowerCase().includes('master key not set')) {
         if (chrome.storage?.session) {
@@ -457,7 +499,7 @@ async function loadVault() {
       }
     }
   } catch (error) {
-    console.error('[EasyKey] Vault Fehler', error);
+    console.error('[EasyKey Popup] Vault Fehler', error);
     showStatus('Fehler beim Laden des Vaults.', 'error');
     setUnlockVisible(true);
   }
@@ -570,9 +612,6 @@ vaultItemsContainer?.addEventListener('click', event => {
     case 'copy-password':
       void copyPassword(item);
       break;
-    case 'toggle-superlogin':
-      void toggleSuperLogin(item, button);
-      break;
     default:
       break;
   }
@@ -620,6 +659,7 @@ async function copyPassword(item: VaultItem) {
   }
 }
 
+
 async function applySuggestion(id: string) {
   console.log('[EasyKey Popup] applySuggestion called with ID:', id);
   showStatus('Speichere Anmeldedaten …', 'info');
@@ -656,48 +696,6 @@ async function dismissSuggestion(id: string) {
     await loadSuggestions();
   } catch (error) {
     console.error('[EasyKey] dismissSuggestion Fehler', error);
-  }
-}
-
-async function toggleSuperLogin(item: VaultItem, button: HTMLElement) {
-  try {
-    const currentState = item.superLogin === true;
-    const newState = !currentState;
-
-    // Optimistic UI update
-    if (newState) {
-      button.classList.remove('toggle-disabled');
-      button.classList.add('toggle-enabled');
-    } else {
-      button.classList.remove('toggle-enabled');
-      button.classList.add('toggle-disabled');
-    }
-
-    showStatus(`SuperLogin wird ${newState ? 'aktiviert' : 'deaktiviert'}...`, 'info');
-
-    const response = await chrome.runtime.sendMessage({
-      type: 'easykey:update-item-settings',
-      itemId: item.id,
-      superLogin: newState,
-    });
-
-    if (response?.ok) {
-      showStatus(`SuperLogin ${newState ? 'aktiviert' : 'deaktiviert'}.`, 'success');
-      await loadVault(); // Reload to sync state
-    } else {
-      // Revert on error
-      if (currentState) {
-        button.classList.remove('toggle-disabled');
-        button.classList.add('toggle-enabled');
-      } else {
-        button.classList.remove('toggle-enabled');
-        button.classList.add('toggle-disabled');
-      }
-      showStatus('Fehler beim Ändern der Einstellung.', 'error');
-    }
-  } catch (error) {
-    console.error('[EasyKey] toggleSuperLogin Fehler', error);
-    showStatus('Fehler beim Ändern der Einstellung.', 'error');
   }
 }
 

@@ -56,7 +56,6 @@ type VaultItemType = {
   passwordHistory?: PasswordHistoryEntry[];
   rotationIntervalDays?: number;
   autoFill?: boolean;  // Enable/disable autofill for this item (default: true)
-  superLogin?: boolean;  // Enable autofill + auto-submit (default: false)
 };
 
 // Erweiterte Vault-Datenstruktur mit Metadaten
@@ -168,7 +167,6 @@ export default function VaultClient() {
   const [formExpiresAt, setFormExpiresAt] = useState<string>('');
   const [formRotationInterval, setFormRotationInterval] = useState<string>('');
   const [formAutoFill, setFormAutoFill] = useState<boolean>(true);
-  const [formSuperLogin, setFormSuperLogin] = useState<boolean>(false);
   const originalPasswordRef = useRef<string>('');
   const bookmarksLoadedRef = useRef(false);
 
@@ -467,7 +465,6 @@ export default function VaultClient() {
     setFormExpiresAt('');
     setFormRotationInterval('');
     setFormAutoFill(true);  // Default: enabled
-    setFormSuperLogin(false);  // Default: disabled
     originalPasswordRef.current = '';
     setShowAddModal(true);
   }
@@ -487,7 +484,6 @@ export default function VaultClient() {
     setFormExpiresAt(isoToDateInput(item.expiresAt));
     setFormRotationInterval(item.rotationIntervalDays ? String(item.rotationIntervalDays) : '');
     setFormAutoFill(item.autoFill !== false);  // Default: true if undefined
-    setFormSuperLogin(item.superLogin === true);  // Default: false if undefined
     originalPasswordRef.current = item.password;
     setShowAddModal(true);
   }
@@ -573,7 +569,6 @@ export default function VaultClient() {
               expiresAt: effectiveExpiresAt,
               rotationIntervalDays: intervalDays,
               autoFill: formAutoFill,
-              superLogin: formSuperLogin,
               passwordHistory: (() => {
                 const history = item.passwordHistory ? [...item.passwordHistory] : [];
                 if (history.length === 0) {
@@ -609,7 +604,6 @@ export default function VaultClient() {
         expiresAt: effectiveExpiresAt,
         rotationIntervalDays: intervalDays,
         autoFill: formAutoFill,
-        superLogin: formSuperLogin,
         passwordHistory: [
           {
             value: formPassword,
@@ -1125,18 +1119,6 @@ function handleDeleteBookmark(bookmarkId: string) {
                         </Badge>
                       </div>
                     </div>
-
-                    <div className="flex flex-col gap-1">
-                      <span className="text-xs uppercase tracking-[0.18em] text-slate-500">SuperLogin</span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-slate-200">
-                          {viewingItem.superLogin === true ? 'Aktiviert' : 'Deaktiviert'}
-                        </span>
-                        <Badge variant={viewingItem.superLogin === true ? 'success' : 'default'}>
-                          {viewingItem.superLogin === true ? '✓' : '✗'}
-                        </Badge>
-                      </div>
-                    </div>
                   </div>
                 </div>
                 <div>
@@ -1433,28 +1415,10 @@ function handleDeleteBookmark(bookmarkId: string) {
                       />
                       <div className="flex-1">
                         <span className="text-sm text-slate-200 group-hover:text-slate-100 transition-colors">
-                          Autofill aktivieren
+                          QuickLogin aktivieren
                         </span>
                         <p className="text-xs text-slate-500 mt-0.5">
-                          Automatisches Ausfüllen von Benutzername und Passwort auf passenden Websites
-                        </p>
-                      </div>
-                    </label>
-
-                    <label className="flex items-center gap-3 cursor-pointer group">
-                      <input
-                        type="checkbox"
-                        checked={formSuperLogin}
-                        onChange={e => setFormSuperLogin(e.target.checked)}
-                        disabled={!formAutoFill}
-                        className="w-4 h-4 bg-slate-700 border-slate-600 rounded text-indigo-500 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-0 focus:ring-offset-slate-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                      />
-                      <div className="flex-1">
-                        <span className={`text-sm transition-colors ${formAutoFill ? 'text-slate-200 group-hover:text-slate-100' : 'text-slate-500'}`}>
-                          SuperLogin aktivieren
-                        </span>
-                        <p className="text-xs text-slate-500 mt-0.5">
-                          Automatisches Ausfüllen + Absenden des Formulars (One-Click-Login)
+                          Zeigt QuickLogin-Benachrichtigung auf Login-Seiten mit Ein-Klick-Anmeldung
                         </p>
                       </div>
                     </label>

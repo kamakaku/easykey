@@ -810,3 +810,257 @@
 [32mESM[39m [1mdist/background.js.map [22m[32m49.11 KB[39m
 [32mESM[39m [1mdist/popup.js.map      [22m[32m41.04 KB[39m
 [32mESM[39m ⚡️ Build success in 9ms
+[34mCLI[39m Change detected: change src/popup/index.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/content.js        [22m[32m20.78 KB[39m
+[32mESM[39m [1mdist/popup.js          [22m[32m22.98 KB[39m
+[32mESM[39m [1mdist/background.js     [22m[32m27.31 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m35.42 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m49.11 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m42.46 KB[39m
+[32mESM[39m ⚡️ Build success in 129ms
+[34mCLI[39m Change detected: change src/popup/index.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/popup.js          [22m[32m23.49 KB[39m
+[32mESM[39m [1mdist/background.js     [22m[32m27.31 KB[39m
+[32mESM[39m [1mdist/content.js        [22m[32m20.78 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m43.18 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m35.42 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m49.11 KB[39m
+[32mESM[39m ⚡️ Build success in 27ms
+[34mCLI[39m Change detected: change src/popup/index.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/background.js     [22m[32m27.31 KB[39m
+[32mESM[39m [1mdist/content.js        [22m[32m20.78 KB[39m
+[32mESM[39m [1mdist/popup.js          [22m[32m23.67 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m49.11 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m43.45 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m35.42 KB[39m
+[32mESM[39m ⚡️ Build success in 24ms
+[34mCLI[39m Change detected: change src/popup/index.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/popup.js          [22m[32m23.97 KB[39m
+[32mESM[39m [1mdist/background.js     [22m[32m27.31 KB[39m
+[32mESM[39m [1mdist/content.js        [22m[32m20.78 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m43.88 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m35.42 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m49.11 KB[39m
+[32mESM[39m ⚡️ Build success in 17ms
+[34mCLI[39m Change detected: change src/background.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/popup.js          [22m[32m23.97 KB[39m
+[32mESM[39m [1mdist/background.js     [22m[32m27.74 KB[39m
+[32mESM[39m [1mdist/content.js        [22m[32m20.78 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m43.88 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m49.70 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m35.42 KB[39m
+[32mESM[39m ⚡️ Build success in 18ms
+[34mCLI[39m Change detected: change src/background.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/content.js        [22m[32m20.78 KB[39m
+[32mESM[39m [1mdist/background.js     [22m[32m28.73 KB[39m
+[32mESM[39m [1mdist/popup.js          [22m[32m23.97 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m51.07 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m35.42 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m43.88 KB[39m
+[32mESM[39m ⚡️ Build success in 21ms
+[34mCLI[39m Change detected: change src/popup/index.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/background.js     [22m[32m28.73 KB[39m
+[32mESM[39m [1mdist/popup.js          [22m[32m24.70 KB[39m
+[32mESM[39m [1mdist/content.js        [22m[32m20.78 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m51.07 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m45.17 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m35.42 KB[39m
+[32mESM[39m ⚡️ Build success in 29ms
+[34mCLI[39m Change detected: change src/popup/index.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/background.js     [22m[32m28.73 KB[39m
+[32mESM[39m [1mdist/popup.js          [22m[32m24.75 KB[39m
+[32mESM[39m [1mdist/content.js        [22m[32m20.78 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m51.07 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m45.27 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m35.42 KB[39m
+[32mESM[39m ⚡️ Build success in 14ms
+[34mCLI[39m Change detected: change src/popup/index.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/popup.js          [22m[32m25.01 KB[39m
+[32mESM[39m [1mdist/background.js     [22m[32m28.73 KB[39m
+[32mESM[39m [1mdist/content.js        [22m[32m20.78 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m45.72 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m51.07 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m35.42 KB[39m
+[32mESM[39m ⚡️ Build success in 9ms
+[34mCLI[39m Change detected: change src/popup/index.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/popup.js          [22m[32m25.03 KB[39m
+[32mESM[39m [1mdist/content.js        [22m[32m20.78 KB[39m
+[32mESM[39m [1mdist/background.js     [22m[32m28.73 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m45.78 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m35.42 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m51.07 KB[39m
+[32mESM[39m ⚡️ Build success in 9ms
+[34mCLI[39m Change detected: change src/content.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/content.js        [22m[32m22.37 KB[39m
+[32mESM[39m [1mdist/background.js     [22m[32m28.73 KB[39m
+[32mESM[39m [1mdist/popup.js          [22m[32m25.03 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m38.17 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m45.78 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m51.07 KB[39m
+[32mESM[39m ⚡️ Build success in 19ms
+[34mCLI[39m Change detected: change src/popup/index.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/popup.js          [22m[32m25.23 KB[39m
+[32mESM[39m [1mdist/background.js     [22m[32m28.73 KB[39m
+[32mESM[39m [1mdist/content.js        [22m[32m22.37 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m51.07 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m38.17 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m46.14 KB[39m
+[32mESM[39m ⚡️ Build success in 26ms
+[34mCLI[39m Change detected: change src/popup/index.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/popup.js          [22m[32m26.11 KB[39m
+[32mESM[39m [1mdist/background.js     [22m[32m28.73 KB[39m
+[32mESM[39m [1mdist/content.js        [22m[32m22.37 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m38.17 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m51.07 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m47.66 KB[39m
+[32mESM[39m ⚡️ Build success in 20ms
+[34mCLI[39m Change detected: change src/popup/index.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/popup.js          [22m[32m27.00 KB[39m
+[32mESM[39m [1mdist/background.js     [22m[32m28.73 KB[39m
+[32mESM[39m [1mdist/content.js        [22m[32m22.37 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m51.07 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m49.27 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m38.17 KB[39m
+[32mESM[39m ⚡️ Build success in 14ms
+[34mCLI[39m Change detected: change src/content.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/background.js     [22m[32m28.73 KB[39m
+[32mESM[39m [1mdist/popup.js          [22m[32m27.00 KB[39m
+[32mESM[39m [1mdist/content.js        [22m[32m24.50 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m51.07 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m41.76 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m49.27 KB[39m
+[32mESM[39m ⚡️ Build success in 18ms
+[34mCLI[39m Change detected: change src/popup/index.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/background.js     [22m[32m28.73 KB[39m
+[32mESM[39m [1mdist/content.js        [22m[32m24.50 KB[39m
+[32mESM[39m [1mdist/popup.js          [22m[32m26.80 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m51.07 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m41.76 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m48.90 KB[39m
+[32mESM[39m ⚡️ Build success in 15ms
+[34mCLI[39m Change detected: change src/popup/index.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/popup.js          [22m[32m26.80 KB[39m
+[32mESM[39m [1mdist/background.js     [22m[32m28.73 KB[39m
+[32mESM[39m [1mdist/content.js        [22m[32m24.50 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m48.83 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m51.07 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m41.76 KB[39m
+[32mESM[39m ⚡️ Build success in 11ms
+[34mCLI[39m Change detected: change src/popup/index.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/content.js        [22m[32m24.50 KB[39m
+[32mESM[39m [1mdist/background.js     [22m[32m28.73 KB[39m
+[32mESM[39m [1mdist/popup.js          [22m[32m25.03 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m41.76 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m51.07 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m46.74 KB[39m
+[32mESM[39m ⚡️ Build success in 12ms
+[34mCLI[39m Change detected: change src/popup/index.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/content.js        [22m[32m24.50 KB[39m
+[32mESM[39m [1mdist/background.js     [22m[32m28.73 KB[39m
+[32mESM[39m [1mdist/popup.js          [22m[32m25.03 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m51.07 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m45.71 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m41.76 KB[39m
+[32mESM[39m ⚡️ Build success in 10ms
+[34mCLI[39m Change detected: change src/popup/index.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/background.js     [22m[32m28.73 KB[39m
+[32mESM[39m [1mdist/popup.js          [22m[32m23.84 KB[39m
+[32mESM[39m [1mdist/content.js        [22m[32m24.50 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m51.07 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m41.76 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m43.86 KB[39m
+[32mESM[39m ⚡️ Build success in 15ms
+[34mCLI[39m Change detected: change src/popup/index.ts
+[34mCLI[39m Change detected: change src/popup/index.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/background.js     [22m[32m28.73 KB[39m
+[32mESM[39m [1mdist/popup.js          [22m[32m22.53 KB[39m
+[32mESM[39m [1mdist/content.js        [22m[32m24.50 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m51.07 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m41.76 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m41.63 KB[39m
+[32mESM[39m ⚡️ Build success in 12ms
+[34mCLI[39m Change detected: change src/background.ts
+[34mCLI[39m Change detected: change src/background.ts
+[34mCLI[39m Change detected: change src/background.ts
+[34mCLI[39m Change detected: change src/background.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/content.js        [22m[32m24.50 KB[39m
+[32mESM[39m [1mdist/popup.js          [22m[32m22.53 KB[39m
+[32mESM[39m [1mdist/background.js     [22m[32m28.48 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m41.76 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m50.66 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m41.63 KB[39m
+[32mESM[39m ⚡️ Build success in 20ms
+[34mCLI[39m Change detected: change src/background.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/background.js     [22m[32m27.24 KB[39m
+[32mESM[39m [1mdist/content.js        [22m[32m24.50 KB[39m
+[32mESM[39m [1mdist/popup.js          [22m[32m22.53 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m48.52 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m41.76 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m41.63 KB[39m
+[32mESM[39m ⚡️ Build success in 8ms
+[34mCLI[39m Change detected: change src/content.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/content.js        [22m[32m21.31 KB[39m
+[32mESM[39m [1mdist/background.js     [22m[32m27.24 KB[39m
+[32mESM[39m [1mdist/popup.js          [22m[32m22.53 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m48.52 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m39.85 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m41.63 KB[39m
+[32mESM[39m ⚡️ Build success in 15ms
+[34mCLI[39m Change detected: change src/content.ts
+[34mCLI[39m Cleaning output folder
+[34mESM[39m Build start
+[32mESM[39m [1mdist/content.js        [22m[32m27.92 KB[39m
+[32mESM[39m [1mdist/popup.js          [22m[32m22.53 KB[39m
+[32mESM[39m [1mdist/background.js     [22m[32m27.24 KB[39m
+[32mESM[39m [1mdist/content.js.map    [22m[32m46.39 KB[39m
+[32mESM[39m [1mdist/background.js.map [22m[32m48.52 KB[39m
+[32mESM[39m [1mdist/popup.js.map      [22m[32m41.63 KB[39m
+[32mESM[39m ⚡️ Build success in 9ms

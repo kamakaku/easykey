@@ -22,7 +22,6 @@ type VaultItem = {
   rotationIntervalDays?: number;
   passwordHistory?: PasswordHistoryEntry[];
   autoFill?: boolean;  // Enable/disable autofill for this item (default: true)
-  superLogin?: boolean;  // Enable autofill + auto-submit (default: false)
 };
 
 type VaultData = {
@@ -149,15 +148,25 @@ function cloneVault(data: VaultData | null): VaultData {
 }
 
 async function loadAndDecryptVault(forceRemote = false): Promise<VaultData> {
+  console.log('[EasyKey Background] loadAndDecryptVault called, forceRemote:', forceRemote);
   const key = await ensureKeyReady();
+  console.log('[EasyKey Background] Master key ready');
+
   const now = Date.now();
   const isFresh = !forceRemote && cache.parsed && now - cache.updatedAt < 60_000;
+  console.log('[EasyKey Background] Cache fresh?', isFresh);
+
   if (isFresh && cache.parsed && cache.plaintext) {
+    console.log('[EasyKey Background] Returning cached vault');
     return cloneVault(cache.parsed);
   }
 
+  console.log('[EasyKey Background] Fetching vault from backend...');
   const blob = await fetchVaultBlob();
+  console.log('[EasyKey Background] Vault blob received:', !!blob);
+
   if (!blob?.blob) {
+    console.log('[EasyKey Background] No vault blob, returning empty vault');
     const empty: VaultData = { items: [], customCategories: [] };
     cache.plaintext = JSON.stringify(empty);
     cache.parsed = cloneVault(empty);
@@ -167,18 +176,24 @@ async function loadAndDecryptVault(forceRemote = false): Promise<VaultData> {
 
   const encoded = blob.blob;
   const decoded = atob(encoded);
+  console.log('[EasyKey Background] Vault blob decoded, length:', decoded.length);
   let plaintext: string;
 
   if (decoded.includes(':')) {
+    console.log('[EasyKey Background] Decrypting vault (new format)...');
     plaintext = await decryptFromStorage(decoded, key);
   } else {
+    console.log('[EasyKey Background] Decrypting vault (legacy format)...');
     plaintext = decodeLegacyBlob(encoded);
   }
 
+  console.log('[EasyKey Background] Vault decrypted, plaintext length:', plaintext.length);
   cache.plaintext = plaintext;
   try {
     cache.parsed = JSON.parse(plaintext) as VaultData;
-  } catch {
+    console.log('[EasyKey Background] Vault parsed successfully, items:', cache.parsed.items?.length);
+  } catch (error) {
+    console.error('[EasyKey Background] Failed to parse vault JSON:', error);
     cache.parsed = { items: [], customCategories: [] };
   }
   cache.updatedAt = Date.now();
@@ -366,7 +381,6 @@ chrome.notifications.onButtonClicked.addListener(async (notificationId, buttonIn
             },
           ],
           autoFill: true,  // Default: enabled
-          superLogin: false,  // Default: disabled (manual submit)
         };
         vault.items.push(newItem);
       }
@@ -500,11 +514,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       case 'easykey:get-vault': {
+        console.log('[EasyKey Background] get-vault request received');
         try {
+          console.log('[EasyKey Background] Loading and decrypting vault...');
           await loadAndDecryptVault(false);
+          console.log('[EasyKey Background] Vault loaded. cache.plaintext length:', cache.plaintext?.length);
+          console.log('[EasyKey Background] cache.plaintext preview:', cache.plaintext?.substring(0, 100));
           sendResponse({ ok: true, vault: cache.plaintext });
+          console.log('[EasyKey Background] Response sent');
         } catch (error) {
-          console.warn('[EasyKey] Failed to read vault', error);
+          console.warn('[EasyKey Background] Failed to read vault', error);
           sendResponse({ ok: false, error: (error as Error).message });
         }
         break;
@@ -642,7 +661,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 },
               ],
               autoFill: true,  // Default: enabled
-              superLogin: false,  // Default: disabled (manual submit)
             };
             vault.items.push(newItem);
           }
@@ -685,14 +703,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               console.log('[EasyKey] Autofill disabled for item:', match.title);
               sendResponse({ ok: true, credentials: null });
             } else {
-              // Include superLogin setting in response
               sendResponse({
                 ok: true,
                 credentials: {
                   username: match.username,
                   password: match.password,
                 },
-                superLogin: match.superLogin ?? false,  // Default: false
               });
             }
           } else {
@@ -700,50 +716,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }
         } catch (error) {
           console.error('[EasyKey] Autofill lookup failed', error);
-          sendResponse({ ok: false, error: (error as Error).message });
-        }
-        break;
-      }
-
-      case 'easykey:update-item-settings': {
-        try {
-          if (!masterKey) {
-            sendResponse({ ok: false, error: 'Master key not set' });
-            break;
-          }
-
-          const { itemId, autoFill, superLogin } = message;
-          if (typeof itemId !== 'number') {
-            sendResponse({ ok: false, error: 'Invalid item ID' });
-            break;
-          }
-
-          const vault = await loadAndDecryptVault(false);
-          const item = vault.items.find(i => i.id === itemId);
-
-          if (!item) {
-            sendResponse({ ok: false, error: 'Item not found' });
-            break;
-          }
-
-          // Update settings
-          if (typeof autoFill === 'boolean') {
-            item.autoFill = autoFill;
-          }
-          if (typeof superLogin === 'boolean') {
-            item.superLogin = superLogin;
-            // If superLogin is enabled, autoFill must also be enabled
-            if (superLogin && !item.autoFill) {
-              item.autoFill = true;
-            }
-          }
-
-          item.updatedAt = new Date().toISOString();
-
-          await saveVaultData(vault);
-          sendResponse({ ok: true });
-        } catch (error) {
-          console.error('[EasyKey] Update item settings failed', error);
           sendResponse({ ok: false, error: (error as Error).message });
         }
         break;

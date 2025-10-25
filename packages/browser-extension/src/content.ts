@@ -74,30 +74,141 @@ function extractCredentials(): Credentials | null {
   };
 }
 
+// Enhanced field detection - more comprehensive selectors
+function findPasswordField(): HTMLInputElement | null {
+  const selectors = [
+    'input[type="password"]',
+    'input[autocomplete="current-password"]',
+    'input[autocomplete="new-password"]',
+    'input[name*="pass" i]',
+    'input[id*="pass" i]',
+    'input[placeholder*="password" i]',
+    'input[placeholder*="passwort" i]',
+    'input[aria-label*="password" i]'
+  ];
+
+  for (const selector of selectors) {
+    const field = document.querySelector<HTMLInputElement>(selector);
+    if (field && !field.disabled && field.offsetParent !== null) {
+      return field;
+    }
+  }
+  return null;
+}
+
+function findUsernameField(): HTMLInputElement | null {
+  const selectors = [
+    'input[type="email"]',
+    'input[autocomplete="email"]',
+    'input[autocomplete="username"]',
+    'input[name*="email" i]',
+    'input[name*="user" i]',
+    'input[name*="login" i]',
+    'input[id*="email" i]',
+    'input[id*="user" i]',
+    'input[id*="login" i]',
+    'input[placeholder*="email" i]',
+    'input[placeholder*="username" i]',
+    'input[placeholder*="benutzername" i]',
+    'input[aria-label*="email" i]',
+    'input[aria-label*="username" i]',
+    'input[type="text"]' // Fallback - should be last
+  ];
+
+  for (const selector of selectors) {
+    const field = document.querySelector<HTMLInputElement>(selector);
+    if (field && !field.disabled && field.offsetParent !== null) {
+      // Skip if it looks like a search or other non-login field
+      const fieldName = (field.name + field.id + field.placeholder).toLowerCase();
+      if (fieldName.includes('search') || fieldName.includes('suche')) {
+        continue;
+      }
+      return field;
+    }
+  }
+  return null;
+}
+
 function receiveFill(credentials: Credentials, autoSubmit: boolean = true): boolean {
   console.log('[EasyKey Content] receiveFill called with:', { hasUsername: !!credentials.username, hasPassword: !!credentials.password, autoSubmit });
 
   let passwordFilled = false;
+  let usernameFilled = false;
 
-  const passwordField = document.querySelector<HTMLInputElement>('input[type="password"]');
+  // Try to fill password field
+  const passwordField = findPasswordField();
   if (passwordField && credentials.password) {
     passwordField.value = credentials.password;
     passwordField.dispatchEvent(new Event('input', { bubbles: true }));
     passwordField.dispatchEvent(new Event('change', { bubbles: true }));
+    passwordField.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
     passwordFilled = true;
     console.log('[EasyKey Content] Password field filled');
   } else {
     console.log('[EasyKey Content] Password field not found or no password to fill');
   }
 
-  const usernameField = document.querySelector<HTMLInputElement>('input[type="email"], input[name*="user"], input[name*="login"], input[type="text"]');
+  // Try to fill username field
+  const usernameField = findUsernameField();
   if (usernameField && credentials.username) {
     usernameField.value = credentials.username;
     usernameField.dispatchEvent(new Event('input', { bubbles: true }));
     usernameField.dispatchEvent(new Event('change', { bubbles: true }));
+    usernameField.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+    usernameFilled = true;
     console.log('[EasyKey Content] Username field filled');
   } else if (credentials.username) {
     console.log('[EasyKey Content] Username field not found');
+  }
+
+  // Multi-Step Login Support: If only username field exists (no password field),
+  // store credentials in sessionStorage for the next page
+  if (usernameFilled && !passwordField && credentials.password) {
+    console.log('[EasyKey Content] Multi-step login detected (username only), storing credentials for next step');
+    try {
+      sessionStorage.setItem('easykey_pending_password', credentials.password);
+      sessionStorage.setItem('easykey_pending_username', credentials.username || '');
+      sessionStorage.setItem('easykey_pending_timestamp', Date.now().toString());
+    } catch (error) {
+      console.warn('[EasyKey Content] Failed to store pending credentials in sessionStorage:', error);
+    }
+  }
+
+  // Check if we're on a password-only page and have pending credentials
+  if (passwordField && !usernameFilled && !usernameField) {
+    console.log('[EasyKey Content] Password-only page detected, checking for pending credentials...');
+    try {
+      const pendingPassword = sessionStorage.getItem('easykey_pending_password');
+      const pendingUsername = sessionStorage.getItem('easykey_pending_username');
+      const pendingTimestamp = sessionStorage.getItem('easykey_pending_timestamp');
+
+      // Check if pending credentials are recent (within last 60 seconds)
+      if (pendingPassword && pendingTimestamp) {
+        const age = Date.now() - parseInt(pendingTimestamp, 10);
+        if (age < 60000) { // 60 seconds
+          console.log('[EasyKey Content] Found recent pending password from multi-step login');
+
+          // Fill password from pending data if we didn't already fill it
+          if (!passwordFilled && pendingPassword) {
+            passwordField.value = pendingPassword;
+            passwordField.dispatchEvent(new Event('input', { bubbles: true }));
+            passwordField.dispatchEvent(new Event('change', { bubbles: true }));
+            passwordField.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+            passwordFilled = true;
+            console.log('[EasyKey Content] Filled password from pending multi-step login');
+          }
+
+          // Clear pending credentials after use
+          sessionStorage.removeItem('easykey_pending_password');
+          sessionStorage.removeItem('easykey_pending_username');
+          sessionStorage.removeItem('easykey_pending_timestamp');
+        } else {
+          console.log('[EasyKey Content] Pending credentials too old (> 60s), ignoring');
+        }
+      }
+    } catch (error) {
+      console.warn('[EasyKey Content] Failed to retrieve pending credentials from sessionStorage:', error);
+    }
   }
 
   // Auto-submit only if password was filled and autoSubmit is enabled
@@ -186,45 +297,27 @@ async function requestAutofill() {
     console.log('[EasyKey Content] Autofill response:', response);
 
     if (response?.ok && response.credentials) {
-      console.log('[EasyKey Content] Credentials found, attempting to fill...');
+      console.log('[EasyKey Content] Credentials found for this site');
 
-      // Use superLogin setting from response (default: false)
-      const autoSubmit = response.superLogin === true;
-      console.log('[EasyKey Content] SuperLogin enabled:', autoSubmit);
+      // Check if login form is present on the page
+      const hasLoginForm = findPasswordField() !== null;
 
-      // Try to fill immediately
-      const filled = receiveFill(response.credentials, autoSubmit);
-
-      if (filled) {
-        console.log('[EasyKey Content] Autofill successful, showing notification');
-        // Store autofilled credentials to prevent re-suggesting them
-        lastAutofilledCredentials = {
-          username: response.credentials.username,
-          password: response.credentials.password || '',
-          timestamp: Date.now()
-        };
-        showAutofillNotification(response.credentials.username);
+      if (hasLoginForm) {
+        console.log('[EasyKey Content] Login form detected, showing QuickLogin notification');
+        showQuickLoginNotification(response.credentials);
       } else {
+        console.log('[EasyKey Content] No login form detected, will retry later');
         // Retry after a delay for dynamic pages that load fields later
-        console.log('[EasyKey Content] No fields found, retrying after 1s...');
         setTimeout(() => {
-          const retryFilled = receiveFill(response.credentials, autoSubmit);
-          if (retryFilled) {
-            console.log('[EasyKey Content] Autofill successful on retry, showing notification');
-            // Store autofilled credentials to prevent re-suggesting them
-            lastAutofilledCredentials = {
-              username: response.credentials.username,
-              password: response.credentials.password || '',
-              timestamp: Date.now()
-            };
-            showAutofillNotification(response.credentials.username);
-          } else {
-            console.log('[EasyKey Content] Autofill failed - no password fields found');
+          const passwordField = findPasswordField();
+          if (passwordField) {
+            console.log('[EasyKey Content] Login form detected on retry, showing QuickLogin notification');
+            showQuickLoginNotification(response.credentials);
           }
         }, 1000);
       }
     } else if (response?.ok === false && response.reason === 'locked') {
-      console.log('[EasyKey Content] Vault is locked, cannot autofill');
+      console.log('[EasyKey Content] Vault is locked, cannot show QuickLogin');
     } else {
       console.log('[EasyKey Content] No credentials found for this URL');
     }
@@ -372,6 +465,151 @@ function checkLoginSuccess(credentials: { username?: string; password: string })
     .catch((error) => {
       console.error('[EasyKey Content] Failed to send suggest-save:', error);
     });
+}
+
+function showQuickLoginNotification(credentials: Credentials) {
+  // Remove any existing QuickLogin notification
+  const existing = document.getElementById('easykey-quicklogin-notification');
+  if (existing) {
+    existing.remove();
+  }
+
+  // Create notification element
+  const notification = document.createElement('div');
+  notification.id = 'easykey-quicklogin-notification';
+  notification.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: linear-gradient(135deg, #4F46E5 0%, #6366F1 100%);
+    color: white;
+    padding: 16px 20px;
+    border-radius: 12px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1);
+    z-index: 999999;
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    max-width: 320px;
+    animation: easykeySlideIn 0.3s ease-out;
+  `;
+
+  const displayUsername = credentials.username || 'Gespeicherte Anmeldedaten';
+
+  notification.innerHTML = `
+    <style>
+      @keyframes easykeySlideIn {
+        from {
+          transform: translateX(400px);
+          opacity: 0;
+        }
+        to {
+          transform: translateX(0);
+          opacity: 1;
+        }
+      }
+      @keyframes easykeySlideOut {
+        from {
+          transform: translateX(0);
+          opacity: 1;
+        }
+        to {
+          transform: translateX(400px);
+          opacity: 0;
+        }
+      }
+      #easykey-quicklogin-notification.closing {
+        animation: easykeySlideOut 0.3s ease-out forwards;
+      }
+      #easykey-quicklogin-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(255, 255, 255, 0.3);
+      }
+      #easykey-quicklogin-btn:active {
+        transform: translateY(0);
+      }
+    </style>
+    <div style="display: flex; align-items: start; gap: 12px;">
+      <div style="flex-shrink: 0; width: 32px; height: 32px; background: rgba(255, 255, 255, 0.2); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px;">
+        🔐
+      </div>
+      <div style="flex: 1;">
+        <div style="font-weight: 600; margin-bottom: 4px;">
+          EasyKey QuickLogin
+        </div>
+        <div style="font-size: 13px; opacity: 0.9; margin-bottom: 8px;">
+          ${displayUsername}
+        </div>
+        <div style="display: flex; gap: 8px; margin-top: 12px;">
+          <button id="easykey-quicklogin-btn" style="
+            background: white;
+            color: #4F46E5;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+          ">
+            Mit QuickLogin anmelden
+          </button>
+          <button id="easykey-quicklogin-close" style="
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.1s;
+          ">
+            ×
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(notification);
+
+  // Add button event listeners
+  const quickLoginButton = notification.querySelector('#easykey-quicklogin-btn');
+  const closeButton = notification.querySelector('#easykey-quicklogin-close');
+
+  quickLoginButton?.addEventListener('click', () => {
+    console.log('[EasyKey Content] QuickLogin button clicked, performing autofill + submit...');
+
+    // Perform autofill with auto-submit enabled
+    const filled = receiveFill(credentials, true);
+
+    if (filled) {
+      console.log('[EasyKey Content] QuickLogin successful');
+      // Store autofilled credentials to prevent re-suggesting them
+      lastAutofilledCredentials = {
+        username: credentials.username,
+        password: credentials.password || '',
+        timestamp: Date.now()
+      };
+
+      // Show success notification
+      removeInlineNotification(notification);
+      showAutofillNotification(credentials.username);
+    } else {
+      console.warn('[EasyKey Content] QuickLogin failed - no password fields found');
+      // Keep notification open if autofill failed
+    }
+  });
+
+  closeButton?.addEventListener('click', () => {
+    removeInlineNotification(notification);
+  });
+
+  // Auto-remove after 15 seconds
+  setTimeout(() => {
+    if (document.body.contains(notification)) {
+      removeInlineNotification(notification);
+    }
+  }, 15000);
 }
 
 function showAutofillNotification(username?: string) {
